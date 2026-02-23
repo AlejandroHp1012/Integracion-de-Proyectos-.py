@@ -34,7 +34,7 @@ from tkinter import ttk
 import time
 import math
 
-# ── Paleta de colores (consistente con los otros módulos) ─────────────────────
+# ── Paleta de colores ─────────────────────────────────────────────────────────
 BG_ROOT   = "#04080F"
 BG_CARD   = "#0C1624"
 BG_CARD2  = "#0A1220"
@@ -45,9 +45,11 @@ RED       = "#FF2D55"
 AMBER     = "#FFB800"
 ORANGE    = "#FF6B00"
 BLUE_LT   = "#1E90FF"
-TEXT_GRAY = "#4A6080"
+TEXT_GRAY = "#7A90A8"   # más claro que antes para mejor contraste
+TEXT_LBL  = "#A8C0D0"   # etiquetas visibles
 TEXT_DARK = "#1E2D40"
-BORDER    = "#122035"
+WHITE     = "#E8F4FF"   # para números importantes
+BORDER    = "#1A2E45"
 BORDER_C  = "#0A4060"
 MONO      = "Courier New"
 
@@ -59,10 +61,10 @@ FASES_COLOR = {
     "APOGEO":     AMBER,
     "DESPLIEGUE": ORANGE,
     "DESCENSO":   GREEN,
-    "ATERRIZAJE": "#A855F7",
+    "ATERRIZAJE": "#C084FC",
 }
 
-# ── Datos de demo para prueba local ──────────────────────────────────────────
+# ── Datos de demo ─────────────────────────────────────────────────────────────
 TELEM_DEMO = [
     {"altitud_m":   0, "velocidad_ms":  0.0, "fase": "STANDBY",    "bateria_pct": 98.0},
     {"altitud_m":  45, "velocidad_ms": 28.5, "fase": "ASCENSO",    "bateria_pct": 97.8},
@@ -80,17 +82,17 @@ TELEM_DEMO = [
 
 
 def _make_card(parent, title, accent=CYAN):
-    """Panel con header — mismo estilo visual que modulo_despegue.py del Equipo 1."""
+    """Panel con header — mismo estilo que modulo_despegue.py del Equipo 1."""
     outer = tk.Frame(parent, bg=accent, bd=1)
-    outer.pack(fill="x", pady=3)
-    hdr = tk.Frame(outer, bg="#061020", height=28)
+    outer.pack(fill="x", pady=4)
+    hdr = tk.Frame(outer, bg="#061020", height=32)
     hdr.pack(fill="x")
     hdr.pack_propagate(False)
     tk.Frame(hdr, bg=accent, width=4).pack(side="left", fill="y")
-    tk.Label(hdr, text=f"  {title}", font=(MONO, 8, "bold"),
+    tk.Label(hdr, text=f"  {title}", font=(MONO, 9, "bold"),   # ← subió de 8 a 9
              bg="#061020", fg=accent, anchor="w").pack(side="left", fill="y")
     tk.Frame(outer, bg=accent, height=1).pack(fill="x")
-    inner = tk.Frame(outer, bg=BG_CARD, padx=10, pady=8)
+    inner = tk.Frame(outer, bg=BG_CARD, padx=12, pady=10)
     inner.pack(fill="both", expand=True)
     return inner
 
@@ -123,7 +125,7 @@ class ModuloDespliegue:
         self._blink           = True
         self._demo_idx        = 0
 
-        # ── Callback → Recuperación (integrador lo asigna) ────────
+        # ── Callback → Recuperación ───────────────────────────────
         self.on_despliegue_confirmado = None
 
         # ── Construir UI ──────────────────────────────────────────
@@ -138,37 +140,37 @@ class ModuloDespliegue:
         self.parent.configure(bg=BG_ROOT)
 
         # ── Header ────────────────────────────────────────────────
-        hdr = tk.Frame(self.parent, bg="#020609", height=50)
+        hdr = tk.Frame(self.parent, bg="#020609", height=54)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
-        tk.Frame(hdr, bg=ORANGE, height=2).pack(fill="x")
+        tk.Frame(hdr, bg=ORANGE, height=3).pack(fill="x")
 
         row = tk.Frame(hdr, bg="#020609")
-        row.pack(fill="both", expand=True, padx=10)
+        row.pack(fill="both", expand=True, padx=12)
         tk.Label(row, text="🪂 DESPLIEGUE",
-                 font=(MONO, 11, "bold"), bg="#020609", fg=ORANGE).pack(side="left")
+                 font=(MONO, 13, "bold"), bg="#020609", fg=ORANGE).pack(side="left")
         tk.Label(row, text="  MISION ALPHA-001",
-                 font=(MONO, 7), bg="#020609", fg=TEXT_GRAY).pack(side="left")
+                 font=(MONO, 9), bg="#020609", fg=TEXT_LBL).pack(side="left")  # más visible
 
         r = tk.Frame(row, bg="#020609")
         r.pack(side="right")
-        self.lbl_clock = tk.Label(r, text="", font=(MONO, 7),
-                                  bg="#020609", fg=TEXT_GRAY)
+        self.lbl_clock = tk.Label(r, text="", font=(MONO, 9),
+                                  bg="#020609", fg=TEXT_LBL)
         self.lbl_clock.pack(anchor="e")
         self.lbl_fase_hdr = tk.Label(r, text="● STANDBY",
-                                     font=(MONO, 8, "bold"),
+                                     font=(MONO, 10, "bold"),
                                      bg="#020609", fg=TEXT_GRAY)
         self.lbl_fase_hdr.pack(anchor="e")
         tk.Frame(hdr, bg=BLUE_LT, height=1).pack(fill="x", side="bottom")
 
         # ── Cuerpo ────────────────────────────────────────────────
         main = tk.Frame(self.parent, bg=BG_ROOT)
-        main.pack(fill="both", expand=True, padx=6, pady=(0, 4))
+        main.pack(fill="both", expand=True, padx=8, pady=(0, 6))
 
         self.left = tk.Frame(main, bg=BG_ROOT)
-        self.left.pack(side="left", fill="both", expand=True, padx=(0, 4))
+        self.left.pack(side="left", fill="both", expand=True, padx=(0, 6))
 
-        self.right = tk.Frame(main, bg=BG_ROOT, width=210)
+        self.right = tk.Frame(main, bg=BG_ROOT, width=240)  # más ancho
         self.right.pack(side="right", fill="both")
         self.right.pack_propagate(False)
 
@@ -186,51 +188,53 @@ class ModuloDespliegue:
         # Fase actual (grande)
         fase_box = tk.Frame(inner, bg=BG_INPUT,
                             highlightbackground=BORDER_C, highlightthickness=1)
-        fase_box.pack(fill="x", pady=(0, 8))
-        top = tk.Frame(fase_box, bg=BG_INPUT)
-        top.pack(fill="x", padx=8, pady=(6, 0))
-        tk.Label(top, text="FASE ACTUAL", font=(MONO, 7),
-                 bg=BG_INPUT, fg=TEXT_GRAY).pack(side="left")
-        self.lbl_fase_num = tk.Label(top, text="1 / 6",
-                                     font=(MONO, 7), bg=BG_INPUT, fg=TEXT_GRAY)
-        self.lbl_fase_num.pack(side="right")
-        self.lbl_fase_grande = tk.Label(fase_box, text="STANDBY",
-                                        font=(MONO, 18, "bold"),
-                                        bg=BG_INPUT, fg=TEXT_GRAY)
-        self.lbl_fase_grande.pack(pady=(2, 8))
+        fase_box.pack(fill="x", pady=(0, 10))
 
-        # Barra de progreso por fases
+        top = tk.Frame(fase_box, bg=BG_INPUT)
+        top.pack(fill="x", padx=10, pady=(8, 0))
+        tk.Label(top, text="FASE ACTUAL", font=(MONO, 9),       # ← 7→9
+                 bg=BG_INPUT, fg=TEXT_LBL).pack(side="left")
+        self.lbl_fase_num = tk.Label(top, text="1 / 6",
+                                     font=(MONO, 9), bg=BG_INPUT, fg=TEXT_LBL)
+        self.lbl_fase_num.pack(side="right")
+
+        self.lbl_fase_grande = tk.Label(fase_box, text="STANDBY",
+                                        font=(MONO, 22, "bold"),  # ← 18→22
+                                        bg=BG_INPUT, fg=TEXT_GRAY)
+        self.lbl_fase_grande.pack(pady=(4, 10))
+
+        # Barra de progreso
         prog = tk.Frame(inner, bg=BG_CARD)
-        prog.pack(fill="x", pady=(0, 6))
+        prog.pack(fill="x", pady=(0, 8))
         self.fase_dots = {}
         for i, fase in enumerate(FASES_ORDEN):
             col = tk.Frame(prog, bg=BG_CARD)
             col.pack(side="left", expand=True)
-            dot = tk.Label(col, text="○", font=(MONO, 10, "bold"),
+            dot = tk.Label(col, text="○", font=(MONO, 13, "bold"),  # ← 10→13
                            bg=BG_CARD, fg=TEXT_DARK)
             dot.pack()
-            tk.Label(col, text=fase[:3], font=(MONO, 6),
+            tk.Label(col, text=fase[:3], font=(MONO, 8),             # ← 6→8
                      bg=BG_CARD, fg=TEXT_DARK).pack()
             self.fase_dots[fase] = dot
             if i < len(FASES_ORDEN) - 1:
-                tk.Label(prog, text="─", font=(MONO, 8),
+                tk.Label(prog, text="─", font=(MONO, 10),
                          bg=BG_CARD, fg=TEXT_DARK).pack(side="left")
 
         # Celdas de condición
-        tk.Frame(inner, bg=BORDER, height=1).pack(fill="x", pady=4)
+        tk.Frame(inner, bg=BORDER, height=1).pack(fill="x", pady=6)
         cond_row = tk.Frame(inner, bg=BG_CARD)
         cond_row.pack(fill="x")
-        for attr, label in [("lbl_cond_alt", "ALT"),
-                             ("lbl_cond_vel", "VEL"),
-                             ("lbl_cond_fase","FASE")]:
+        for attr, label in [("lbl_cond_alt",  "ALT"),
+                             ("lbl_cond_vel",  "VEL"),
+                             ("lbl_cond_fase", "FASE")]:
             cell = tk.Frame(cond_row, bg=BG_CARD2,
                             highlightbackground=BORDER, highlightthickness=1)
             cell.pack(side="left", expand=True, fill="x",
-                      padx=2, ipady=4, ipadx=4)
-            tk.Label(cell, text=label, font=(MONO, 6),
-                     bg=BG_CARD2, fg=TEXT_GRAY).pack()
-            lbl = tk.Label(cell, text="---", font=(MONO, 8, "bold"),
-                           bg=BG_CARD2, fg=TEXT_DARK)
+                      padx=3, ipady=6, ipadx=6)
+            tk.Label(cell, text=label, font=(MONO, 8),              # ← 6→8
+                     bg=BG_CARD2, fg=TEXT_LBL).pack()
+            lbl = tk.Label(cell, text="---", font=(MONO, 11, "bold"),  # ← 8→11
+                           bg=BG_CARD2, fg=WHITE)
             lbl.pack()
             setattr(self, attr, lbl)
 
@@ -241,33 +245,34 @@ class ModuloDespliegue:
         row = tk.Frame(inner, bg=BG_CARD)
         row.pack(fill="x")
 
-        self.canvas_chute = tk.Canvas(row, width=80, height=70,
+        self.canvas_chute = tk.Canvas(row, width=90, height=80,   # ← más grande
                                       bg=BG_CARD, highlightthickness=0)
-        self.canvas_chute.pack(side="left", padx=(0, 12))
+        self.canvas_chute.pack(side="left", padx=(0, 14))
         self._dibujar_paracaidas(False, 0)
 
         info = tk.Frame(row, bg=BG_CARD)
         info.pack(side="left", fill="both", expand=True)
         self.lbl_chute_estado = tk.Label(info, text="EN ESPERA",
-                                         font=(MONO, 12, "bold"),
+                                         font=(MONO, 14, "bold"),   # ← 12→14
                                          bg=BG_CARD, fg=TEXT_GRAY)
         self.lbl_chute_estado.pack(anchor="w")
         self.lbl_chute_sub = tk.Label(
             info,
             text="Aguardando condiciones\nde despliegue.",
-            font=(MONO, 7), bg=BG_CARD, fg=TEXT_GRAY, justify="left")
-        self.lbl_chute_sub.pack(anchor="w", pady=(4, 0))
+            font=(MONO, 9), bg=BG_CARD, fg=TEXT_LBL, justify="left")  # ← 7→9, más claro
+        self.lbl_chute_sub.pack(anchor="w", pady=(6, 0))
 
-        tk.Frame(inner, bg=BORDER, height=1).pack(fill="x", pady=6)
+        # Condiciones
+        tk.Frame(inner, bg=BORDER, height=1).pack(fill="x", pady=8)
         self.chute_conds = {}
         for texto, key in [("Altitud en rango",      "alt"),
                             ("Velocidad decreciente", "vel"),
                             ("Apogeo detectado",      "apo"),
                             ("Comando recibido",      "cmd")]:
             f = tk.Frame(inner, bg=BG_CARD)
-            f.pack(fill="x", pady=1)
+            f.pack(fill="x", pady=2)
             lbl = tk.Label(f, text="✗  " + texto,
-                           font=(MONO, 7), bg=BG_CARD, fg=RED)
+                           font=(MONO, 9), bg=BG_CARD, fg=RED)   # ← 7→9
             lbl.pack(side="left")
             self.chute_conds[key] = (lbl, texto)
 
@@ -275,8 +280,8 @@ class ModuloDespliegue:
     def _panel_eventos(self):
         inner = _make_card(self.left, "REGISTRO DE EVENTOS", BLUE_LT)
         self.eventos_text = tk.Text(
-            inner, bg="#020A14", fg=TEXT_GRAY,
-            font=(MONO, 7), relief="flat",
+            inner, bg="#020A14", fg=TEXT_LBL,        # ← fg más claro
+            font=(MONO, 9), relief="flat",            # ← 7→9
             height=7, state="disabled",
             insertbackground=CYAN)
         sb = ttk.Scrollbar(inner, orient="vertical",
@@ -285,7 +290,7 @@ class ModuloDespliegue:
         self.eventos_text.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
         self._log("MÓDULO DESPLIEGUE v1.0 INICIADO", "SYS", CYAN)
-        self._log("Aguardando datos de Telemetría.", "SYS", TEXT_GRAY)
+        self._log("Aguardando datos de Telemetría.", "SYS", TEXT_LBL)
 
     # ── Panel: Datos (columna derecha) ────────────────────────────
     def _panel_datos(self):
@@ -294,10 +299,10 @@ class ModuloDespliegue:
                                     ("VELOCIDAD", "lbl_d_vel",  GREEN),
                                     ("BATERÍA",   "lbl_d_batt", AMBER)]:
             row = tk.Frame(inner, bg=BG_CARD)
-            row.pack(fill="x", pady=3)
-            tk.Label(row, text=label, font=(MONO, 7),
-                     bg=BG_CARD, fg=TEXT_GRAY).pack(side="left")
-            lbl = tk.Label(row, text="---", font=(MONO, 10, "bold"),
+            row.pack(fill="x", pady=5)
+            tk.Label(row, text=label, font=(MONO, 9),            # ← 7→9
+                     bg=BG_CARD, fg=TEXT_LBL).pack(side="left")  # ← más claro
+            lbl = tk.Label(row, text="---", font=(MONO, 13, "bold"),  # ← 10→13
                            bg=BG_CARD, fg=color)
             lbl.pack(side="right")
             setattr(self, attr, lbl)
@@ -305,7 +310,7 @@ class ModuloDespliegue:
     # ── Panel: Gráfica (columna derecha) ──────────────────────────
     def _panel_grafica(self):
         inner = _make_card(self.right, "PERFIL DE ALTITUD", BLUE_LT)
-        self.canvas_graf = tk.Canvas(inner, bg="#020A14", height=80,
+        self.canvas_graf = tk.Canvas(inner, bg="#020A14", height=90,  # ← más alto
                                      highlightthickness=0)
         self.canvas_graf.pack(fill="x")
 
@@ -314,37 +319,37 @@ class ModuloDespliegue:
         inner = _make_card(self.right, "CONFIRMACIÓN DE DESPLIEGUE", GREEN)
 
         self.lbl_auth = tk.Label(inner, text="  DENEGADA",
-                                 font=(MONO, 7, "bold"), bg=BG_CARD, fg=RED)
-        self.lbl_auth.pack(anchor="w", pady=(0, 4))
+                                 font=(MONO, 9, "bold"), bg=BG_CARD, fg=RED)  # ← 7→9
+        self.lbl_auth.pack(anchor="w", pady=(0, 6))
 
         self.btn_desplegar = tk.Button(
             inner,
-            text="▶ DESPLEGAR\n   PARACAÍDAS",
-            font=(MONO, 9, "bold"),
+            text="▶  DESPLEGAR PARACAÍDAS",
+            font=(MONO, 10, "bold"),        # ← 9→10
             bg="#1A0A00", fg=TEXT_DARK,
-            relief="flat", bd=0, pady=10,
+            relief="flat", bd=0, pady=12,
             cursor="hand2", state="disabled",
             command=self._confirmar_despliegue)
-        self.btn_desplegar.pack(fill="x", pady=(0, 4))
+        self.btn_desplegar.pack(fill="x", pady=(0, 6))
 
         self.btn_manual = tk.Button(
             inner,
-            text="⚠ DESPLIEGUE MANUAL",
-            font=(MONO, 8, "bold"),
+            text="⚠  DESPLIEGUE MANUAL",
+            font=(MONO, 9, "bold"),         # ← 8→9
             bg="#1A0800", fg=AMBER,
-            relief="flat", bd=0, pady=6,
+            relief="flat", bd=0, pady=8,
             cursor="hand2",
             command=self._despliegue_manual)
         self.btn_manual.pack(fill="x")
 
-        tk.Frame(inner, bg=BORDER, height=1).pack(fill="x", pady=6)
+        tk.Frame(inner, bg=BORDER, height=1).pack(fill="x", pady=8)
         tk.Label(inner, text="PAYLOAD → RECUPERACIÓN",
-                 font=(MONO, 7), bg=BG_CARD, fg=TEXT_GRAY).pack(anchor="w")
+                 font=(MONO, 8), bg=BG_CARD, fg=TEXT_LBL).pack(anchor="w")  # ← más claro
         self.lbl_payload = tk.Label(
             inner, text='{ "status": "waiting" }',
-            font=(MONO, 7), bg="#020A14", fg=TEXT_GRAY,
-            justify="left", anchor="w", wraplength=180)
-        self.lbl_payload.pack(fill="x", ipady=4, ipadx=4)
+            font=(MONO, 8), bg="#020A14", fg=TEXT_LBL,   # ← más claro
+            justify="left", anchor="w", wraplength=210)
+        self.lbl_payload.pack(fill="x", ipady=5, ipadx=6)
 
     # ══════════════════════════════════════════════════════════════
     #  GRÁFICAS Y ANIMACIONES
@@ -353,58 +358,58 @@ class ModuloDespliegue:
     def _dibujar_paracaidas(self, desplegado=False, animacion=0.0):
         c = self.canvas_chute
         c.delete("all")
-        cx = 40
+        cx = 45  # centrado en canvas de 90px
 
         if not desplegado:
-            c.create_oval(32, 20, 48, 36, outline=TEXT_GRAY, fill=BG_CARD2, width=2)
-            for lx in [36, 40, 44]:
-                c.create_line(lx, 36, lx, 55, fill=TEXT_GRAY, dash=(2, 2))
-            c.create_rectangle(34, 55, 46, 65, fill=BORDER, outline=TEXT_GRAY)
+            c.create_oval(36, 22, 54, 40, outline=TEXT_LBL, fill=BG_CARD2, width=2)
+            for lx in [40, 45, 50]:
+                c.create_line(lx, 40, lx, 60, fill=TEXT_LBL, dash=(2, 2))
+            c.create_rectangle(38, 60, 52, 72, fill=BORDER, outline=TEXT_LBL)
         else:
-            swing = math.sin(animacion) * 6
+            swing = math.sin(animacion) * 7
             color = GREEN if self.despliegue_conf else AMBER
             pts = []
             for i in range(13):
                 angle = math.radians(180 + i * 15)
-                r = 28 + 4 * math.sin(animacion * 2 + i * 0.5)
+                r = 32 + 5 * math.sin(animacion * 2 + i * 0.5)
                 px = cx + swing * 0.3 + r * math.cos(angle)
-                py = 15 + r * math.sin(angle) * 0.5
+                py = 18 + r * math.sin(angle) * 0.5
                 pts.append((px, py))
             if len(pts) >= 3:
                 flat = [v for p in pts for v in p]
                 c.create_polygon(flat, fill=BG_CARD2, outline=color, width=2)
             for i in range(0, len(pts), 3):
                 c.create_line(pts[i][0], pts[i][1],
-                              cx + swing * 0.5, 55,
+                              cx + swing * 0.5, 62,
                               fill=color, width=1)
-            c.create_rectangle(cx - 6 + swing * 0.5, 55,
-                                cx + 6 + swing * 0.5, 67,
-                                fill=BORDER, outline=color, width=1)
+            c.create_rectangle(cx - 7 + swing * 0.5, 62,
+                                cx + 7 + swing * 0.5, 76,
+                                fill=BORDER, outline=color, width=2)
 
     def _actualizar_grafica(self):
         c = self.canvas_graf
-        w = c.winfo_width() or 180
-        h = c.winfo_height() or 80
+        w = c.winfo_width() or 200
+        h = c.winfo_height() or 90
         c.delete("all")
         hist = self._alt_historial[-40:]
         if len(hist) < 2:
             c.create_text(w // 2, h // 2, text="SIN DATOS",
-                          fill=TEXT_DARK, font=(MONO, 8))
+                          fill=TEXT_GRAY, font=(MONO, 9))
             return
         max_a = max(hist) or 1
         pts = []
         for i, a in enumerate(hist):
             x = int(i / (len(hist) - 1) * (w - 4)) + 2
-            y = int(h - 6 - (a / max_a) * (h - 12))
+            y = int(h - 6 - (a / max_a) * (h - 14))
             pts.append((x, y))
         area = [pts[0][0], h - 4] + [v for p in pts for v in p] + [pts[-1][0], h - 4]
         c.create_polygon(area, fill="#001428", outline="")
         flat = [v for p in pts for v in p]
         c.create_line(flat, fill=CYAN, width=2)
         lx, ly = pts[-1]
-        c.create_oval(lx - 3, ly - 3, lx + 3, ly + 3, fill=ORANGE, outline=ORANGE)
-        c.create_text(4, 4, text=f"{int(max_a)}m",
-                      fill=TEXT_GRAY, font=(MONO, 6), anchor="nw")
+        c.create_oval(lx - 4, ly - 4, lx + 4, ly + 4, fill=ORANGE, outline=ORANGE)
+        c.create_text(5, 5, text=f"{int(max_a)} m",
+                      fill=TEXT_LBL, font=(MONO, 8), anchor="nw")   # ← más visible
 
     # ══════════════════════════════════════════════════════════════
     #  LOOP PRINCIPAL
@@ -414,14 +419,12 @@ class ModuloDespliegue:
         self._tick += 1
         self.lbl_clock.config(text=time.strftime("T+%H:%M:%S"))
 
-        # Parpadeo header
         if self._tick % 8 == 0:
             self._blink = not self._blink
         color_fase = FASES_COLOR[self.fase_actual]
         dot = "●" if self._blink or self.fase_actual == "STANDBY" else "○"
         self.lbl_fase_hdr.config(text=f"{dot} {self.fase_actual}", fg=color_fase)
 
-        # Animación paracaídas
         if self.paracaidas_ok:
             self._paracaidas_anim += 0.12
             self._dibujar_paracaidas(True, self._paracaidas_anim)
@@ -454,20 +457,18 @@ class ModuloDespliegue:
 
         # Celdas de condición
         self.lbl_cond_alt.config(
-            text=f"{self.altitud:.0f}m",
-            fg=GREEN if self.altitud > 50 else TEXT_GRAY)
+            text=f"{self.altitud:.0f} m",
+            fg=GREEN if self.altitud > 50 else WHITE)
         self.lbl_cond_vel.config(
             text=f"{self.velocidad:+.1f}",
             fg=GREEN if self.velocidad <= 0 else CYAN)
         self.lbl_cond_fase.config(
             text=nueva_fase[:4],
-            fg=FASES_COLOR.get(nueva_fase, TEXT_GRAY))
+            fg=FASES_COLOR.get(nueva_fase, WHITE))
 
-        # Cambio de fase
         if nueva_fase != self.fase_actual and nueva_fase in FASES_ORDEN:
             self._cambiar_fase(nueva_fase)
 
-        # Condiciones del paracaídas
         self._actualizar_condiciones_chute()
 
     def _cambiar_fase(self, nueva_fase: str):
@@ -501,12 +502,11 @@ class ModuloDespliegue:
         cond_cmd = self.fase_actual in ("DESPLIEGUE", "DESCENSO", "ATERRIZAJE")
 
         for key, ok in [("alt", cond_alt), ("vel", cond_vel),
-                         ("apo", cond_apo), ("cmd", cond_cmd)]:
+                        ("apo", cond_apo), ("cmd", cond_cmd)]:
             lbl, texto = self.chute_conds[key]
             lbl.config(text=("✓  " if ok else "✗  ") + texto,
                        fg=GREEN if ok else RED)
 
-        # Habilitar botón de despliegue
         if cond_alt and cond_vel and cond_apo and not self.paracaidas_ok:
             self.btn_desplegar.config(state="normal", fg=GREEN,
                                       bg="#001800", cursor="hand2")
@@ -529,7 +529,7 @@ class ModuloDespliegue:
         self.despliegue_conf = True
         self.paracaidas_ok   = True
 
-        self.btn_desplegar.config(text="✓ CONFIRMADO",
+        self.btn_desplegar.config(text="✓  CONFIRMADO",
                                   state="disabled", fg=CYAN, bg="#001428")
         self.lbl_chute_estado.config(text="CONFIRMADO", fg=GREEN)
         self.lbl_chute_sub.config(
@@ -551,7 +551,6 @@ class ModuloDespliegue:
                  f'  "fase": "{self.fase_actual}" }}',
             fg=GREEN)
 
-        # ── Notificar a Recuperación ──────────────────────────────
         if callable(self.on_despliegue_confirmado):
             self.on_despliegue_confirmado(payload)
 
@@ -582,7 +581,7 @@ class ModuloDespliegue:
     # ══════════════════════════════════════════════════════════════
 
     def _log(self, msg, tag="SYS", color=None):
-        color = color or TEXT_GRAY
+        color = color or TEXT_LBL
         ts = time.strftime("%H:%M:%S")
         line = f"[{ts}][{tag}] {msg}\n"
         t = self.eventos_text
@@ -596,7 +595,6 @@ class ModuloDespliegue:
     # ══════════════════════════════════════════════════════════════
 
     def _demo_tick(self):
-        """Simula llegada de datos de Telemetría para prueba local."""
         if self._demo_idx < len(TELEM_DEMO):
             self.recibir_datos(TELEM_DEMO[self._demo_idx])
             self._demo_idx += 1
@@ -616,7 +614,7 @@ if __name__ == "__main__":
 
     root = tk.Tk()
     root.title("PRUEBA — Módulo Despliegue (Equipo 2)")
-    root.geometry("1000x640")
+    root.state("zoomed")          # ← pantalla completa en Windows
     root.configure(bg=BG_ROOT)
     frame = tk.Frame(root, bg=BG_ROOT)
     frame.pack(fill="both", expand=True)
@@ -624,5 +622,4 @@ if __name__ == "__main__":
     modulo.on_despliegue_confirmado = simular_recuperacion
     root.after(1000, modulo._demo_tick)
     root.mainloop()
-
 
