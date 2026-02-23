@@ -28,7 +28,7 @@ MONO    = "Courier New"
 # ══════════════════════════════════════════════════════════════════
 from modulo_despegue     import ModuloDespegue       # ✓ Equipo 1 — listo
 from modulo_recuperacion import ModuloRecuperacion   # ✓ Equipo 4 — listo
-from modulo_despliegue   import ModuloDespliegue     # ⏳ Equipo 2 — usar plantilla
+from modulo_despliegue   import ModuloDespliegue     # ✓ Equipo 2 — listo
 from modulo_aterrizaje   import ModuloAterrizaje     # ⏳ Equipo 3 — usar plantilla
 
 
