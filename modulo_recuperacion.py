@@ -123,6 +123,7 @@ class ModuloRecuperacion:
         self._leds: dict = {}
         self._json_buffer: list = []
         self._json_last_flush: float = 0.0
+        self._json_last_save: float  = 0.0          # control del guardado cada 15s
         self._json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                        "telemetria_log.json")
 
@@ -537,11 +538,54 @@ class ModuloRecuperacion:
                           f"ALT {self.altitud:.1f}m  DST {self.distancia:.0f}m  "
                           f"BAT {self.bateria:.1f}%")
 
+            # ── Guardado JSON cada 15 segundos ───────────────────
+            ahora = time.time()
+            if ahora - self._json_last_save >= 15.0:
+                self._json_last_save = ahora
+                self._guardar_json()
+
         self._actualizar_leds()
         self._dibujar_radar()
         self._dibujar_bateria()
         self._dibujar_mapa_sim()
         self.root.after(100, self._loop)
+
+    # ── Guardado JSON ─────────────────────────────────────────────
+    def _guardar_json(self):
+        """
+        Agrega una muestra de telemetría al archivo telemetria_log.json.
+        El archivo contiene una lista de registros; cada registro es un
+        dict con timestamp y todos los valores del sensor en ese momento.
+        Si el archivo no existe lo crea. Si existe, agrega al final.
+        """
+        muestra = {
+            "timestamp":  datetime.now().isoformat(timespec="seconds"),
+            "latitud":    round(self.latitud,   6),
+            "longitud":   round(self.longitud,  6),
+            "altitud_m":  round(self.altitud,   2),
+            "distancia_m":round(self.distancia, 1),
+            "velocidad_ms":round(self.velocidad,2),
+            "bateria_pct":round(self.bateria,   1),
+            "angulo_radar":self.angulo_radar,
+            "hora_gps":   self.hora_gps,
+        }
+        try:
+            # Leer registros existentes (si el archivo ya existe)
+            if os.path.exists(self._json_path):
+                with open(self._json_path, "r", encoding="utf-8") as f:
+                    datos = json.load(f)
+            else:
+                datos = []
+
+            datos.append(muestra)
+
+            with open(self._json_path, "w", encoding="utf-8") as f:
+                json.dump(datos, f, indent=2, ensure_ascii=False)
+
+            self._log(f">>> JSON guardado — {len(datos)} registros en telemetria_log.json")
+
+        except Exception as e:
+            self._log(f">>> ERROR al guardar JSON: {e}")
 
     def _toggle(self):
         self.sistema_activo = not self.sistema_activo
