@@ -7,39 +7,36 @@
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-import time, math, json, os, datetime
+import time, math, json, os, datetime, csv
 
 # ═══════════════════════════════════════════════════════════════
 #  PALETA — Light Aerospace Control
 # ═══════════════════════════════════════════════════════════════
-BG_ROOT    = "#F0F4F8"   # gris muy claro — fondo general
-BG_PANEL   = "#FFFFFF"   # blanco puro — tarjetas
-BG_DEEP    = "#E2E8F0"   # gris claro — fondos secundarios
-BG_INPUT   = "#EDF2F7"   # input fields
+BG_ROOT    = "#F0F4F8"
+BG_PANEL   = "#FFFFFF"
+BG_DEEP    = "#E2E8F0"
+BG_INPUT   = "#EDF2F7"
 
-# Acentos vivos sobre fondo claro
-NAVY       = "#0A2463"   # azul marino — texto principal
-BLUE       = "#1565C0"   # azul fuerte — acento primario
-TEAL       = "#00796B"   # verde azulado — positivo/OK
-GREEN_V    = "#2E7D32"   # verde oscuro — confirmado
-RED_V      = "#C62828"   # rojo oscuro — alarma
-ORANGE_V   = "#E65100"   # naranja quemado — despliegue
-AMBER_V    = "#F57F17"   # ámbar oscuro — apogeo/batería
-CYAN_V     = "#00838F"   # cyan oscuro — ascenso
-PURPLE_V   = "#6A1B9A"   # morado — aterrizaje
+NAVY       = "#0A2463"
+BLUE       = "#1565C0"
+TEAL       = "#00796B"
+GREEN_V    = "#2E7D32"
+RED_V      = "#C62828"
+ORANGE_V   = "#E65100"
+AMBER_V    = "#F57F17"
+CYAN_V     = "#00838F"
+PURPLE_V   = "#6A1B9A"
 
-# Texto
-TXT_HEAD   = "#0A1929"   # texto headers
-TXT_MAIN   = "#1A237E"   # texto valores importantes
-TXT_SUB    = "#455A64"   # texto secundario
-TXT_MUTED  = "#90A4AE"   # texto atenuado
+TXT_HEAD   = "#0A1929"
+TXT_MAIN   = "#1A237E"
+TXT_SUB    = "#455A64"
+TXT_MUTED  = "#90A4AE"
 
-# Bordes
-BDR        = "#CFD8DC"   # borde suave
-BDR_HOT    = "#1565C0"   # borde activo
+BDR        = "#CFD8DC"
+BDR_HOT    = "#1565C0"
 
 MONO       = "Courier New"
-SANS       = "Trebuchet MS"   # sans limpio y legible
+SANS       = "Trebuchet MS"
 
 FASES_ORDEN = ["STANDBY","ASCENSO","APOGEO","DESPLIEGUE","DESCENSO","ATERRIZAJE"]
 FASES_COLOR = {
@@ -76,7 +73,7 @@ TELEM_DEMO = [
 
 
 class ModuloDespliegue:
-    def _init_(self, parent_frame):
+    def __init__(self, parent_frame):
         self.parent = parent_frame
 
         self.fase_actual     = "STANDBY"
@@ -88,13 +85,18 @@ class ModuloDespliegue:
         self._alt_hist       = []
         self._vel_hist       = []
         self._eventos        = []
-        self.sesion_inicio  = time.strftime("%Y%m%d%H%M%S")
+        self._sesion_inicio  = time.strftime("%Y%m%d_%H%M%S")
         self._para_anim      = 0.0
         self._tick           = 0
         self._blink          = True
         self._demo_idx       = 0
         self._max_alt        = 0.0
         self._min_vel        = 9999.0
+
+        # ── MEJORAS ───────────────────────────────────────────
+        self._umbral_alt_m   = 50.0          # configurable desde UI
+        self._fase_ts        = time.time()   # timestamp inicio fase actual
+        self._MAX_EVENTOS    = 500           # límite de eventos en memoria
 
         self.on_despliegue_confirmado = None
 
@@ -107,33 +109,35 @@ class ModuloDespliegue:
 
     def _build_ui(self):
         self.parent.configure(bg=BG_ROOT)
+
+        # ── CIERRE SEGURO ─────────────────────────────────────
+        root = self.parent.winfo_toplevel()
+        root.protocol("WM_DELETE_WINDOW", self._on_closing)
+
         self._build_topbar()
 
         body = tk.Frame(self.parent, bg=BG_ROOT)
         body.pack(fill="both", expand=True, padx=10, pady=(4, 8))
 
-        # Columna izquierda (datos vuelo grandes)
         self.col_L = tk.Frame(body, bg=BG_ROOT, width=260)
         self.col_L.pack(side="left", fill="y", padx=(0, 6))
         self.col_L.pack_propagate(False)
 
-        # Columna central (fase + gráfica + log)
         self.col_M = tk.Frame(body, bg=BG_ROOT)
         self.col_M.pack(side="left", fill="both", expand=True, padx=(0, 6))
 
-        # Columna derecha (paracaídas + confirmación + guardar)
         self.col_R = tk.Frame(body, bg=BG_ROOT, width=240)
         self.col_R.pack(side="right", fill="y")
         self.col_R.pack_propagate(False)
 
-        self._panel_datos_grandes()     # col L — protagonista
-        self._panel_condiciones()       # col L
-        self._panel_fase()              # col M
-        self._panel_grafica()           # col M
-        self._panel_log()               # col M
-        self._panel_paracaidas()        # col R
-        self._panel_confirmacion()      # col R
-        self._panel_guardado()          # col R
+        self._panel_datos_grandes()
+        self._panel_condiciones()
+        self._panel_fase()
+        self._panel_grafica()
+        self._panel_log()
+        self._panel_paracaidas()
+        self._panel_confirmacion()
+        self._panel_guardado()
 
     # ── TOPBAR ───────────────────────────────────────────────────
     def _build_topbar(self):
@@ -141,14 +145,12 @@ class ModuloDespliegue:
         bar.pack(fill="x")
         bar.pack_propagate(False)
 
-        # Banda de color de fase en la parte superior
         self.top_band = tk.Frame(bar, bg=TXT_MUTED, height=5)
         self.top_band.pack(fill="x")
 
         inner = tk.Frame(bar, bg=NAVY)
         inner.pack(fill="both", expand=True, padx=14)
 
-        # Izquierda
         left = tk.Frame(inner, bg=NAVY)
         left.pack(side="left", fill="y")
 
@@ -162,14 +164,14 @@ class ModuloDespliegue:
         tk.Label(titl, text="MISIÓN ALPHA-001  ·  SISTEMA DE RECUPERACIÓN",
                  font=(SANS, 8), bg=NAVY, fg="#90CAF9").pack(anchor="w")
 
-        # Derecha
         right = tk.Frame(inner, bg=NAVY)
         right.pack(side="right", fill="y")
 
-        # Botones sesión
         for txt, cmd, clr, bg in [
             ("↓ GUARDAR", self._guardar_sesion, NAVY, "#64B5F6"),
             ("↑ CARGAR",  self._cargar_sesion,  NAVY, "#4DB6AC"),
+            ("⟳ RESET",   self._reset_mision,   NAVY, "#EF9A9A"),
+            ("📋 LOG",    self._exportar_log,    NAVY, "#CE93D8"),
         ]:
             tk.Button(right, text=txt,
                       font=(SANS, 8, "bold"),
@@ -178,7 +180,6 @@ class ModuloDespliegue:
                       activebackground="white", activeforeground=NAVY,
                       command=cmd).pack(side="right", padx=3, pady=8)
 
-        # Reloj
         clk_box = tk.Frame(right, bg=NAVY)
         clk_box.pack(side="right", padx=16)
         self.lbl_clock = tk.Label(clk_box, text="T+00:00:00",
@@ -195,47 +196,39 @@ class ModuloDespliegue:
     # ═══════════════════════════════════════════════════════════
 
     def _panel_datos_grandes(self):
-        """3 tarjetas con número enorme — el core visual."""
-        # ALTITUD
         self._tarjeta_dato(
             self.col_L, "ALTITUD", "lbl_alt",
             "m", BLUE, "#EBF5FB", accent_left=BLUE)
 
-        # VELOCIDAD
         self._tarjeta_dato(
             self.col_L, "VELOCIDAD", "lbl_vel",
             "m/s", TEAL, "#E8F8F5", accent_left=TEAL)
 
-        # BATERÍA
         self._tarjeta_dato(
             self.col_L, "BATERÍA", "lbl_batt",
             "%", AMBER_V, "#FFFDE7", accent_left=AMBER_V)
 
     def _tarjeta_dato(self, parent, titulo, attr, unidad,
                       color, bg_card, accent_left):
-        """Tarjeta grande: etiqueta + número enorme + unidad."""
         card = tk.Frame(parent, bg=bg_card,
                         highlightbackground=BDR,
                         highlightthickness=1)
         card.pack(fill="x", pady=4)
 
-        # Barra izquierda de color
         tk.Frame(card, bg=accent_left, width=6).pack(side="left", fill="y")
 
         body = tk.Frame(card, bg=bg_card, padx=10, pady=8)
         body.pack(side="left", fill="both", expand=True)
 
-        # Título
         tk.Label(body, text=titulo,
                  font=(SANS, 9, "bold"),
                  bg=bg_card, fg=TXT_SUB).pack(anchor="w")
 
-        # Número + unidad en la misma fila
         val_row = tk.Frame(body, bg=bg_card)
         val_row.pack(anchor="w")
 
         lbl = tk.Label(val_row, text="---",
-                       font=(MONO, 32, "bold"),    # ← gigante
+                       font=(MONO, 32, "bold"),
                        bg=bg_card, fg=color)
         lbl.pack(side="left", anchor="s")
 
@@ -255,7 +248,6 @@ class ModuloDespliegue:
             row = tk.Frame(card, bg=BG_PANEL)
             row.pack(fill="x", pady=3)
 
-            # Indicador circular
             ind = tk.Label(row, text="●",
                            font=(SANS, 13),
                            bg=BG_PANEL, fg=BDR)
@@ -267,6 +259,23 @@ class ModuloDespliegue:
             lbl.pack(side="left", padx=6)
             self.cond_items[key] = (ind, lbl)
 
+        # ── UMBRAL DE ALTITUD CONFIGURABLE ────────────────────
+        tk.Frame(card, bg=BDR, height=1).pack(fill="x", pady=(6, 4))
+        umb_row = tk.Frame(card, bg=BG_PANEL)
+        umb_row.pack(fill="x")
+        tk.Label(umb_row, text="Umbral alt. (m):",
+                 font=(SANS, 8), bg=BG_PANEL, fg=TXT_SUB).pack(side="left")
+        self._umbral_var = tk.StringVar(value=str(int(self._umbral_alt_m)))
+        umb_entry = tk.Entry(umb_row, textvariable=self._umbral_var,
+            width=6, font=(MONO, 9), bg=BG_INPUT, fg=TXT_HEAD,
+            relief="flat", highlightbackground=BDR, highlightthickness=1,
+            insertbackground=BLUE)
+        umb_entry.pack(side="left", padx=4)
+        tk.Button(umb_row, text="✓", font=(SANS, 8, "bold"),
+                  bg=BLUE, fg="white", relief="flat", padx=4,
+                  cursor="hand2",
+                  command=self._aplicar_umbral).pack(side="left")
+
     # ═══════════════════════════════════════════════════════════
     #  COLUMNA CENTRAL
     # ═══════════════════════════════════════════════════════════
@@ -277,7 +286,6 @@ class ModuloDespliegue:
         top_row = tk.Frame(card, bg=BG_PANEL)
         top_row.pack(fill="x")
 
-        # Fase grande con fondo de color reactivo
         self.fase_box = tk.Frame(top_row, bg=FASES_BG["STANDBY"],
                                   highlightbackground=TXT_MUTED,
                                   highlightthickness=2)
@@ -291,7 +299,6 @@ class ModuloDespliegue:
                                       bg=FASES_BG["STANDBY"], fg=TXT_MUTED)
         self.lbl_fase_gde.pack(padx=20, pady=(2, 8))
 
-        # Info de fase
         info_col = tk.Frame(top_row, bg=BG_PANEL)
         info_col.pack(side="left", fill="both", expand=True)
 
@@ -306,7 +313,11 @@ class ModuloDespliegue:
             justify="left", wraplength=260)
         self.lbl_fase_desc.pack(anchor="w", pady=(4, 0))
 
-        # Barra de progreso de fases
+        # ── CRONÓMETRO DE FASE ────────────────────────────────
+        self.lbl_fase_timer = tk.Label(info_col, text="en fase: 00:00",
+            font=(MONO, 8), bg=BG_PANEL, fg=TXT_MUTED)
+        self.lbl_fase_timer.pack(anchor="w", pady=(2, 0))
+
         tk.Frame(card, bg=BDR, height=1).pack(fill="x", pady=(8, 4))
 
         prog_row = tk.Frame(card, bg=BG_PANEL)
@@ -324,7 +335,6 @@ class ModuloDespliegue:
                      font=(SANS, 7, "bold"),
                      bg=BG_PANEL, fg=TXT_MUTED).pack(pady=(2, 0))
 
-        # Fila de valores clave
         tk.Frame(card, bg=BDR, height=1).pack(fill="x", pady=(6, 4))
         kv_row = tk.Frame(card, bg=BG_PANEL)
         kv_row.pack(fill="x")
@@ -365,7 +375,6 @@ class ModuloDespliegue:
                                 highlightthickness=0)
         self.cv_vel.pack(fill="x")
 
-        # Stats bajo la gráfica
         st_row = tk.Frame(card, bg=BG_PANEL)
         st_row.pack(fill="x", pady=(6, 0))
         for txt, attr, clr in [
@@ -385,7 +394,6 @@ class ModuloDespliegue:
     def _panel_log(self):
         card = self._card(self.col_M, "REGISTRO DE EVENTOS", BLUE)
 
-        # Barra de nota del operador
         note_row = tk.Frame(card, bg=BG_PANEL)
         note_row.pack(fill="x", pady=(0, 4))
 
@@ -414,7 +422,6 @@ class ModuloDespliegue:
                   activebackground=NAVY, activeforeground="white",
                   command=lambda: self._enviar_nota(nota_entry)).pack(side="right")
 
-        # Log text
         self.log_text = tk.Text(
             card, bg="#FAFCFF", fg=TXT_HEAD,
             font=(MONO, 9), relief="flat",
@@ -427,7 +434,6 @@ class ModuloDespliegue:
         self.log_text.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
 
-        # Tags de color
         self.log_text.tag_config("SYS",  foreground=TXT_SUB)
         self.log_text.tag_config("FASE", foreground=BLUE)
         self.log_text.tag_config("CHT",  foreground=GREEN_V)
@@ -450,7 +456,6 @@ class ModuloDespliegue:
         self.cv_chute.pack(pady=(0, 6))
         self._draw_chute(False, 0)
 
-        # Estado con badge grande
         self.estado_box = tk.Frame(card, bg=BG_DEEP,
                                     highlightbackground=BDR,
                                     highlightthickness=2)
@@ -467,7 +472,6 @@ class ModuloDespliegue:
     def _panel_confirmacion(self):
         card = self._card(self.col_R, "CONFIRMACIÓN DE DESPLIEGUE", GREEN_V)
 
-        # Auth badge
         self.auth_frame = tk.Frame(card, bg="#FFEBEE",
                                     highlightbackground=RED_V,
                                     highlightthickness=2)
@@ -478,7 +482,6 @@ class ModuloDespliegue:
             bg="#FFEBEE", fg=RED_V, pady=8)
         self.lbl_auth.pack()
 
-        # Botón despliegue — enorme y visible
         self.btn_deploy = tk.Button(card,
             text="▶  DESPLEGAR PARACAÍDAS",
             font=(SANS, 11, "bold"),
@@ -565,7 +568,6 @@ class ModuloDespliegue:
                          highlightthickness=1)
         outer.pack(fill="x", pady=4)
 
-        # Header con fondo de acento claro
         hdr_bg = self._lighten(accent)
         hdr = tk.Frame(outer, bg=hdr_bg, height=28)
         hdr.pack(fill="x")
@@ -581,7 +583,6 @@ class ModuloDespliegue:
 
     @staticmethod
     def _lighten(hex_color):
-        """Mezcla el color con blanco para hacer header claro."""
         mix = {
             BLUE:     "#E3F2FD",
             TEAL:     "#E0F2F1",
@@ -606,22 +607,16 @@ class ModuloDespliegue:
         w, h = 220, 130
 
         if not deployed:
-            # Cohete limpio
             c.create_text(cx, 10, text="SISTEMA CERRADO",
                           font=(SANS, 8, "bold"), fill=TXT_MUTED, anchor="n")
-            # Cuerpo
             c.create_rectangle(cx-14, 38, cx+14, 72,
                                fill=BG_DEEP, outline=BDR, width=2)
-            # Nariz
             c.create_polygon(cx-14, 38, cx, 16, cx+14, 38,
                              fill=BLUE, outline=BLUE)
-            # Líneas
             for y in range(44, 72, 7):
                 c.create_line(cx-14, y, cx+14, y, fill=BDR, width=1)
-            # Hilos
             for lx in [cx-5, cx, cx+5]:
                 c.create_line(lx, 72, lx, 100, fill=TXT_MUTED, dash=(3,3))
-            # Paquete
             c.create_rectangle(cx-10, 100, cx+10, 116,
                                fill=BG_DEEP, outline=TXT_MUTED, width=1)
             c.create_text(cx, 108, text="PKG", font=(MONO, 7), fill=TXT_MUTED)
@@ -630,7 +625,6 @@ class ModuloDespliegue:
             bg_fill = "#E8F5E9" if self.despliegue_conf else "#FBE9E7"
             swing = math.sin(anim) * 7
 
-            # Dosel
             pts = []
             for i in range(15):
                 angle = math.radians(180 + i * 12.85)
@@ -644,19 +638,16 @@ class ModuloDespliegue:
                 c.create_polygon(flat, fill=bg_fill, outline=color,
                                  width=3, smooth=True)
 
-            # Hilos del dosel
             for i in [0, 3, 7, 11, 14]:
                 if i < len(pts):
                     c.create_line(pts[i][0], pts[i][1],
                                   cx + swing * 0.6, 108,
                                   fill=color, width=1)
 
-            # Carga
             cx2 = int(cx + swing * 0.6)
             c.create_rectangle(cx2-11, 108, cx2+11, 124,
                                fill=bg_fill, outline=color, width=2)
 
-            # Etiqueta
             est = "CONFIRMADO" if self.despliegue_conf else "DESPLEGADO"
             c.create_text(cx, 5, text=f"✓ {est}",
                           font=(SANS, 9, "bold"), fill=color, anchor="n")
@@ -678,7 +669,6 @@ class ModuloDespliegue:
         h = c.winfo_height() or 70
         c.delete("all")
 
-        # Rejilla suave
         for gx in range(0, w, 40):
             c.create_line(gx, 0, gx, h, fill=BDR, width=1)
         for gy in range(0, h, 20):
@@ -699,28 +689,23 @@ class ModuloDespliegue:
             y = int(h - 5 - ((v - mn) / rng) * (h - 12))
             pts.append((x, y))
 
-        # Área rellena con gradiente visual
         area = [pts[0][0], h] + [v for p in pts for v in p] + [pts[-1][0], h]
         c.create_polygon(area, fill=fill_color, outline="", stipple="gray50")
         c.create_polygon(area, fill=fill_color, outline="")
 
-        # Curva
         flat = [v for p in pts for v in p]
         c.create_line(flat, fill=line_color, width=2, smooth=True)
 
-        # Punto actual
         lx, ly = pts[-1]
         c.create_oval(lx-5, ly-5, lx+5, ly+5,
                       fill=line_color, outline="white", width=2)
 
-        # Línea cero
         if zero_line and mn < 0 < mx:
             zy = int(h - 5 - ((0 - mn) / rng) * (h - 12))
             c.create_line(0, zy, w, zy, fill=RED_V, dash=(5,3), width=1)
             c.create_text(w-3, zy-3, text="0",
                           fill=RED_V, font=(SANS, 7), anchor="ne")
 
-        # Valor actual
         last_val = data[-1]
         txt = f"{last_val:+.1f}" if zero_line else f"{last_val:.0f} m"
         c.create_text(w-4, 4, text=txt,
@@ -741,6 +726,12 @@ class ModuloDespliegue:
         sym = "●" if self._blink else "○"
         self.lbl_fase_top.config(text=f"{sym} {self.fase_actual}", fg=color)
         self.top_band.config(bg=color)
+
+        # ── CRONÓMETRO DE FASE ────────────────────────────────
+        elapsed = int(time.time() - self._fase_ts)
+        mm, ss = divmod(elapsed, 60)
+        self.lbl_fase_timer.config(
+            text=f"en fase: {mm:02d}:{ss:02d}", fg=color)
 
         if self.paracaidas_ok:
             self._para_anim += 0.1
@@ -764,7 +755,6 @@ class ModuloDespliegue:
         if len(self._alt_hist) > 200: self._alt_hist = self._alt_hist[-200:]
         if len(self._vel_hist) > 200: self._vel_hist = self._vel_hist[-200:]
 
-        # Stats
         if self.altitud > self._max_alt:
             self._max_alt = self.altitud
             self.lbl_amax.config(text=f"{self._max_alt:.0f} m")
@@ -772,17 +762,15 @@ class ModuloDespliegue:
             self._min_vel = self.velocidad
             self.lbl_vmin.config(text=f"{self._min_vel:+.1f} m/s")
 
-        # Valores grandes
         self.lbl_alt.config(text=f"{self.altitud:.1f}")
         vel_c = TEAL if self.velocidad <= 0 else CYAN_V
         self.lbl_vel.config(text=f"{self.velocidad:+.1f}", fg=vel_c)
         bat_c = GREEN_V if self.bateria > 50 else AMBER_V if self.bateria > 20 else RED_V
         self.lbl_batt.config(text=f"{self.bateria:.1f}", fg=bat_c)
 
-        # Celdas centrales
         self.lbl_c_alt.config(
             text=f"{self.altitud:.0f}",
-            fg=BLUE if self.altitud > 50 else TXT_MUTED)
+            fg=BLUE if self.altitud > self._umbral_alt_m else TXT_MUTED)
         self.lbl_c_vel.config(
             text=f"{self.velocidad:+.1f}",
             fg=TEAL if self.velocidad <= 0 else CYAN_V)
@@ -819,7 +807,6 @@ class ModuloDespliegue:
         self.lbl_paso.config(text=f"PASO  {idx+1} / 6", fg=color)
         self.lbl_fase_desc.config(text=DESCS.get(nueva, ""), fg=TXT_SUB)
 
-        # Segmentos de progreso
         for i, f in enumerate(FASES_ORDEN):
             if i < idx:
                 self.fase_segs[f].config(bg=TEAL)
@@ -829,11 +816,12 @@ class ModuloDespliegue:
                 self.fase_segs[f].config(bg=BG_DEEP)
 
         self._log(f"FASE: {prev} → {nueva}", "FASE")
+        self._fase_ts = time.time()   # reinicia cronómetro de fase
         if nueva == "DESPLIEGUE":
             self._activar_paracaidas()
 
     def _update_condiciones(self):
-        ok_alt = self.altitud > 50
+        ok_alt = self.altitud > self._umbral_alt_m
         ok_vel = self.velocidad <= 0
         ok_apo = self.fase_actual in ("APOGEO","DESPLIEGUE","DESCENSO","ATERRIZAJE")
         ok_cmd = self.fase_actual in ("DESPLIEGUE","DESCENSO","ATERRIZAJE")
@@ -865,11 +853,24 @@ class ModuloDespliegue:
         self._log("PARACAÍDAS ACTIVADO — NOMINAL", "CHT")
 
     # ═══════════════════════════════════════════════════════════
-    #  BOTONES
+    #  BOTONES — con confirmación
     # ═══════════════════════════════════════════════════════════
 
     def _confirmar_despliegue(self):
-        if self.despliegue_conf: return
+        if self.despliegue_conf:
+            return
+        # ── CONFIRMACIÓN ──────────────────────────────────────
+        if not messagebox.askokcancel(
+            "Confirmar despliegue",
+            f"¿Confirmar DESPLIEGUE DE PARACAÍDAS?\n\n"
+            f"  Altitud:   {self.altitud:.1f} m\n"
+            f"  Velocidad: {self.velocidad:+.1f} m/s\n"
+            f"  Fase:      {self.fase_actual}\n\n"
+            "Esta acción no se puede deshacer.",
+            icon="warning"
+        ):
+            return
+        # ── LÓGICA ORIGINAL (sin cambios) ─────────────────────
         self.despliegue_conf = True
         self.paracaidas_ok   = True
         self.btn_deploy.config(text="✓  DESPLIEGUE CONFIRMADO",
@@ -896,8 +897,26 @@ class ModuloDespliegue:
             fg=GREEN_V)
         if callable(self.on_despliegue_confirmado):
             self.on_despliegue_confirmado(payload)
+        # ── MENSAJE FINAL ─────────────────────────────────────
+        messagebox.showinfo(
+            "Despliegue confirmado",
+            f"✓ Paracaídas desplegado correctamente.\n\n"
+            f"  Altitud:   {self.altitud:.1f} m\n"
+            f"  Timestamp: {time.strftime('%H:%M:%S')}"
+        )
 
     def _despliegue_manual(self):
+        # ── CONFIRMACIÓN (doble advertencia por ser override) ──
+        if not messagebox.askyesno(
+            "⚠ DESPLIEGUE MANUAL — OVERRIDE",
+            "Está a punto de activar el DESPLIEGUE MANUAL.\n\n"
+            "Este modo omite todas las condiciones automáticas.\n"
+            "Use solo en caso de emergencia.\n\n"
+            "¿Desea continuar?",
+            icon="warning"
+        ):
+            return
+        # ── LÓGICA ORIGINAL (sin cambios) ─────────────────────
         self._log("⚠ DESPLIEGUE MANUAL ACTIVADO", "EMRG")
         self._activar_paracaidas()
         self.btn_deploy.config(state="normal",
@@ -905,6 +924,14 @@ class ModuloDespliegue:
         self.lbl_auth.config(text="⚠  OVERRIDE MANUAL",
                               fg=AMBER_V, bg="#FFF8E1")
         self.auth_frame.config(bg="#FFF8E1", highlightbackground=AMBER_V)
+        # ── CONFIRMACIÓN FINAL ────────────────────────────────
+        messagebox.showwarning(
+            "Override manual ejecutado",
+            f"⚠ Despliegue manual activado.\n\n"
+            f"  Altitud:   {self.altitud:.1f} m\n"
+            f"  Velocidad: {self.velocidad:+.1f} m/s\n"
+            f"  Timestamp: {time.strftime('%H:%M:%S')}"
+        )
 
     def _enviar_nota(self, entry_widget):
         txt = entry_widget.get().strip()
@@ -913,6 +940,9 @@ class ModuloDespliegue:
             self._log(f"[OP] {txt}", "OP")
             entry_widget.delete(0, "end")
             entry_widget.insert(0, placeholder)
+            # ── CONFIRMACIÓN ──────────────────────────────────
+            messagebox.showinfo("Nota registrada",
+                                f"Nota añadida al registro:\n\n\"{txt}\"")
 
     # ═══════════════════════════════════════════════════════════
     #  GUARDAR / CARGAR
@@ -949,25 +979,62 @@ class ModuloDespliegue:
             title="Guardar sesión",
             defaultextension=".json",
             initialfile=f"{nombre}.json",
-            filetypes=[("JSON",".json"),("Todos",".*")])
-        if not ruta: return
+            filetypes=[("JSON","*.json"),("Todos","*.*")])
+        if not ruta:
+            return
         try:
             with open(ruta, "w", encoding="utf-8") as f:
                 json.dump(sesion, f, indent=2, ensure_ascii=False)
             self.lbl_save_st.config(
                 text=f"✓  Guardado: {os.path.basename(ruta)}", fg=GREEN_V)
             self._log(f"SESIÓN GUARDADA → {os.path.basename(ruta)}", "SAVE")
+            # ── CONFIRMACIÓN ──────────────────────────────────
+            messagebox.showinfo(
+                "Sesión guardada",
+                f"✓ Sesión guardada exitosamente.\n\n"
+                f"  Archivo: {os.path.basename(ruta)}\n"
+                f"  Fase:    {self.fase_actual}\n"
+                f"  Eventos: {len(self._eventos)}"
+            )
         except Exception as ex:
             self.lbl_save_st.config(text=f"✗  Error: {ex}", fg=RED_V)
 
     def _cargar_sesion(self):
+        # ── CONFIRMACIÓN PREVIA ────────────────────────────────
+        if not messagebox.askokcancel(
+            "Cargar sesión",
+            "¿Cargar una sesión guardada?\n\n"
+            "El estado actual del módulo será reemplazado\n"
+            "por los datos del archivo seleccionado.",
+            icon="question"
+        ):
+            return
         ruta = filedialog.askopenfilename(
             title="Cargar sesión",
-            filetypes=[("JSON",".json"),("Todos",".*")])
-        if not ruta: return
+            filetypes=[("JSON","*.json"),("Todos","*.*")])
+        if not ruta:
+            return
         try:
             with open(ruta, "r", encoding="utf-8") as f:
                 sesion = json.load(f)
+
+            # ── VALIDACIÓN DE ESQUEMA ─────────────────────────
+            if not isinstance(sesion, dict):
+                raise ValueError("El archivo no contiene un objeto JSON válido.")
+            for seccion in ("meta", "estado", "historial"):
+                if seccion not in sesion:
+                    raise ValueError(f"Falta la sección requerida: '{seccion}'.")
+            estado_req = ("fase_actual", "altitud_m", "velocidad_ms", "bateria_pct")
+            for campo in estado_req:
+                if campo not in sesion["estado"]:
+                    raise ValueError(f"Falta el campo de estado: '{campo}'.")
+            fase_cargada = sesion["estado"].get("fase_actual", "STANDBY").upper()
+            if fase_cargada not in FASES_ORDEN:
+                raise ValueError(
+                    f"Fase desconocida en el archivo: '{fase_cargada}'.\n"
+                    f"Valores válidos: {', '.join(FASES_ORDEN)}")
+            # ── FIN VALIDACIÓN ────────────────────────────────
+
             meta   = sesion.get("meta",   {})
             estado = sesion.get("estado", {})
             hist   = sesion.get("historial", {})
@@ -1002,6 +1069,15 @@ class ModuloDespliegue:
             self.lbl_save_st.config(
                 text=f"↑  Cargado: {fname}", fg=BLUE)
             self._log(f"SESIÓN CARGADA ← {fname}", "SAVE")
+            # ── CONFIRMACIÓN ──────────────────────────────────
+            messagebox.showinfo(
+                "Sesión cargada",
+                f"✓ Sesión cargada exitosamente.\n\n"
+                f"  Archivo: {fname}\n"
+                f"  Misión:  {meta.get('mision', '—')}\n"
+                f"  Fase:    {self.fase_actual}\n"
+                f"  Eventos: {len(evs)}"
+            )
         except Exception as ex:
             self.lbl_save_st.config(text=f"✗  Error: {ex}", fg=RED_V)
             messagebox.showerror("Error al cargar", str(ex))
@@ -1013,11 +1089,198 @@ class ModuloDespliegue:
     def _log(self, msg, tag="SYS"):
         ts = time.strftime("%H:%M:%S")
         self._eventos.append({"ts": ts, "tag": tag, "msg": msg})
+        # ── LÍMITE DE EVENTOS ─────────────────────────────────
+        if len(self._eventos) > self._MAX_EVENTOS:
+            self._eventos = self._eventos[-self._MAX_EVENTOS:]
         t = self.log_text
         t.config(state="normal")
         t.insert("end", f"[{ts}][{tag}] {msg}\n", tag)
         t.see("end")
         t.config(state="disabled")
+
+    # ═══════════════════════════════════════════════════════════
+    #  MEJORAS: cierre seguro · reset · export log · umbral
+    # ═══════════════════════════════════════════════════════════
+
+    def _on_closing(self):
+        """Confirmación de cierre con oferta de guardar."""
+        if self.fase_actual not in ("STANDBY",) or self._eventos:
+            resp = messagebox.askyesnocancel(
+                "Cerrar módulo",
+                f"La misión está en fase: {self.fase_actual}\n"
+                f"Hay {len(self._eventos)} evento(s) registrados.\n\n"
+                "¿Desea guardar la sesión antes de salir?",
+                icon="warning"
+            )
+            if resp is None:          # Cancelar → no cerrar
+                return
+            if resp:                  # Sí → guardar y luego cerrar
+                self._guardar_sesion()
+        self.parent.winfo_toplevel().destroy()
+
+    def _reset_mision(self):
+        """Reinicia el módulo a estado STANDBY limpio."""
+        if not messagebox.askyesno(
+            "⟳ RESET — Nueva misión",
+            "¿Iniciar una NUEVA MISIÓN?\n\n"
+            "Se borrarán todos los datos actuales:\n"
+            "historial de vuelo, eventos y estado.\n\n"
+            "Guarde la sesión antes si lo necesita.",
+            icon="warning"
+        ):
+            return
+
+        self.fase_actual     = "STANDBY"
+        self.altitud         = 0.0
+        self.velocidad       = 0.0
+        self.bateria         = 0.0
+        self.paracaidas_ok   = False
+        self.despliegue_conf = False
+        self._alt_hist       = []
+        self._vel_hist       = []
+        self._eventos        = []
+        self._sesion_inicio  = time.strftime("%Y%m%d_%H%M%S")
+        self._para_anim      = 0.0
+        self._demo_idx       = 0
+        self._max_alt        = 0.0
+        self._min_vel        = 9999.0
+        self._fase_ts        = time.time()
+
+        # Resetear widgets de estado
+        self.lbl_alt.config(text="---")
+        self.lbl_vel.config(text="---", fg=TEAL)
+        self.lbl_batt.config(text="---", fg=AMBER_V)
+        self.lbl_amax.config(text="---")
+        self.lbl_vmin.config(text="---")
+        self.lbl_c_alt.config(text="---", fg=TXT_MUTED)
+        self.lbl_c_vel.config(text="---", fg=TEAL)
+        self.lbl_c_fase.config(text="STBY", fg=TXT_MUTED)
+        self.lbl_fase_gde.config(text="STANDBY", fg=TXT_MUTED,
+                                  bg=FASES_BG["STANDBY"])
+        self.fase_box.config(bg=FASES_BG["STANDBY"],
+                              highlightbackground=TXT_MUTED)
+        for w in self.fase_box.winfo_children():
+            w.config(bg=FASES_BG["STANDBY"])
+        self.lbl_paso.config(text="PASO  1 / 6", fg=TXT_MUTED)
+        self.lbl_fase_desc.config(
+            text="Sistema en espera.\nSin telemetría activa.")
+        self.lbl_fase_timer.config(text="en fase: 00:00", fg=TXT_MUTED)
+        for f in FASES_ORDEN:
+            self.fase_segs[f].config(bg=BG_DEEP)
+
+        # Resetear paracaídas
+        self._draw_chute(False, 0)
+        self.lbl_chute_st.config(text="EN ESPERA", fg=TXT_MUTED, bg=BG_DEEP)
+        self.lbl_chute_sub.config(
+            text="Aguardando condiciones.", fg=TXT_SUB, bg=BG_DEEP)
+        self.estado_box.config(highlightbackground=BDR, bg=BG_DEEP)
+
+        # Resetear botón de despliegue
+        self.btn_deploy.config(text="▶  DESPLEGAR PARACAÍDAS",
+                               state="disabled", bg=BG_DEEP, fg=TXT_MUTED)
+        self.lbl_auth.config(text="✗  ACCESO DENEGADO",
+                              fg=RED_V, bg="#FFEBEE")
+        self.auth_frame.config(bg="#FFEBEE", highlightbackground=RED_V)
+        self.lbl_payload.config(text='{ "status": "waiting" }', fg=TXT_SUB)
+
+        # Resetear condiciones
+        for key in self.cond_items:
+            ind, lbl = self.cond_items[key]
+            ind.config(fg=BDR)
+            lbl.config(fg=TXT_MUTED, font=(SANS, 10))
+
+        # Limpiar log visual
+        self.log_text.config(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.config(state="disabled")
+
+        self.sesion_name_var.set(f"SESION_{self._sesion_inicio}")
+        self.lbl_save_st.config(text="Sin sesión guardada.", fg=TXT_MUTED)
+
+        self._log("RESET — NUEVA MISIÓN INICIADA", "SYS")
+        self._log("Aguardando datos de telemetría.", "SYS")
+
+        # ── PREGUNTA DE REACTIVACIÓN ──────────────────────────
+        resp = messagebox.askyesno(
+            "Reset completado",
+            "✓ Módulo reiniciado.\n\n"
+            "¿Desea lanzar la secuencia DEMO ahora?\n\n"
+            "  Sí  → inicia telemetría de prueba\n"
+            "  No  → queda en STANDBY esperando\n"
+            "         datos reales",
+            icon="question"
+        )
+        if resp:
+            self._demo_idx = 0
+            self._log("DEMO RELANZADO TRAS RESET", "SYS")
+            self.parent.after(800, self._demo_tick)
+
+    def _exportar_log(self):
+        """Exporta el registro de eventos a TXT o CSV."""
+        if not self._eventos:
+            messagebox.showinfo("Log vacío",
+                                "No hay eventos registrados para exportar.")
+            return
+
+        ruta = filedialog.asksaveasfilename(
+            title="Exportar registro de eventos",
+            defaultextension=".txt",
+            initialfile=f"LOG_{self._sesion_inicio}",
+            filetypes=[
+                ("Texto plano", "*.txt"),
+                ("CSV",         "*.csv"),
+                ("Todos",       "*.*"),
+            ]
+        )
+        if not ruta:
+            return
+
+        try:
+            ext = os.path.splitext(ruta)[1].lower()
+            if ext == ".csv":
+                with open(ruta, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=["ts", "tag", "msg"])
+                    writer.writeheader()
+                    writer.writerows(self._eventos)
+            else:
+                with open(ruta, "w", encoding="utf-8") as f:
+                    f.write(f"MÓDULO DESPLIEGUE v3 — REGISTRO DE EVENTOS\n")
+                    f.write(f"Sesión: {self._sesion_inicio}\n")
+                    f.write(f"Exportado: {datetime.datetime.now().isoformat()}\n")
+                    f.write("=" * 52 + "\n\n")
+                    for ev in self._eventos:
+                        f.write(f"[{ev['ts']}][{ev['tag']:4s}] {ev['msg']}\n")
+
+            self._log(
+                f"LOG EXPORTADO → {os.path.basename(ruta)} "
+                f"({len(self._eventos)} eventos)", "SAVE")
+            messagebox.showinfo(
+                "Log exportado",
+                f"✓ Registro exportado exitosamente.\n\n"
+                f"  Archivo: {os.path.basename(ruta)}\n"
+                f"  Eventos: {len(self._eventos)}\n"
+                f"  Formato: {ext.upper() or '.TXT'}"
+            )
+        except Exception as ex:
+            messagebox.showerror("Error al exportar", str(ex))
+
+    def _aplicar_umbral(self):
+        """Aplica el nuevo umbral de altitud ingresado por el operador."""
+        try:
+            nuevo = float(self._umbral_var.get().strip())
+            if nuevo < 0:
+                raise ValueError("El umbral no puede ser negativo.")
+            self._umbral_alt_m = nuevo
+            self._log(f"UMBRAL ALTITUD → {nuevo:.0f} m", "SYS")
+            messagebox.showinfo(
+                "Umbral actualizado",
+                f"✓ Nuevo umbral de altitud: {nuevo:.0f} m\n\n"
+                "Las condiciones de despliegue\nse evaluarán con este valor."
+            )
+        except ValueError as ex:
+            messagebox.showerror("Valor inválido",
+                                 f"Ingrese un número válido.\n\n{ex}")
+            self._umbral_var.set(str(int(self._umbral_alt_m)))
 
     # ═══════════════════════════════════════════════════════════
     #  PÚBLICO
@@ -1038,7 +1301,7 @@ class ModuloDespliegue:
 # ═══════════════════════════════════════════════════════════════
 #  PRUEBA LOCAL
 # ═══════════════════════════════════════════════════════════════
-if _name_ == "_main_":
+if __name__ == "__main__":
     def sim_rec(payload):
         print("\n[RECUPERACIÓN] Estado final:")
         for k, v in payload.items():
