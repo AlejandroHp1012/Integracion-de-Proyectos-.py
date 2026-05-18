@@ -7,7 +7,6 @@ import threading
 import json
 import os
 import socket  # <--- NUEVA LIBRERÍA PARA EL WI-FI
-SERIAL_AVAILABLE = False
 
 import shared_state as SS   # Bus de datos compartido
 
@@ -47,11 +46,12 @@ LED_COLORS = {
     LED_ERROR: {"center": "#F85149", "ring": "#DA3633", "glow": "#3D0B0B"},
 }
 
-FONT_MONO   = ("Courier New", 8,  "bold")
-FONT_MONO_S = ("Courier New", 7,  "bold")
-FONT_MONO_L = ("Courier New", 10, "bold")
-FONT_MONO_XL= ("Courier New", 14, "bold")
-FONT_VALUE  = ("Courier New", 12, "bold")
+FONT_MONO   = ("Courier New", 7,  "bold")
+FONT_MONO_S = ("Courier New", 8,  "bold")
+FONT_MONO_L = ("Courier New", 9,  "bold")
+FONT_MONO_XL= ("Courier New", 10, "bold")
+FONT_VALUE  = ("Courier New", 9,  "bold")
+FONT_HEADER = ("Courier New", 9,  "bold")
 
 
 class FocoLED(tk.Canvas):
@@ -106,18 +106,15 @@ class FocoLED(tk.Canvas):
         return f"#{r:02x}{g:02x}{bl:02x}"
 
 
-
-
 class ModuloRecuperacion:
     def __init__(self, parent_frame):
         self.root = parent_frame
 
         self.sistema_activo = False
+        self._modo_espejo   = False
+        self.escuchando_wifi = False
         self.latitud   = 22.16100
         self.longitud  = -102.26877
-        self.base_latitud  = 22.16100  # Base dinámica (se actualiza con primer GPS)
-        self.base_longitud = -102.26877
-        self.base_establecida = False
         self.altitud   = 2500.0
         self.velocidad = 0.0
         self.distancia = 1500.0
@@ -141,12 +138,10 @@ class ModuloRecuperacion:
 
         self._log(f"Sistema iniciado — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self._log("Aguardando activación del subsistema de recuperación...")
-        self._log(f"Base inicial: {self.base_latitud:.4f}°N, {self.base_longitud:.4f}°W")
-        self._log("Enlace Wi-Fi (UDP) disponible en puerto 8080")
-        self._log(">>> Al activar, la base se actualizará con las coordenadas de la ESP32")
+        self._log(f"Pos base: {self.latitud:.4f}°N, {self.longitud:.4f}°W  Alt: {self.altitud:.0f}m")
 
     def _construir_ui(self):
-        hdr = tk.Frame(self.root, bg=C["panel"], height=54)
+        hdr = tk.Frame(self.root, bg=C["panel"], height=38)
         hdr.pack(fill=tk.X)
         hdr.pack_propagate(False)
         tk.Frame(hdr, bg=C["border_hi"], height=2).pack(fill=tk.X)
@@ -157,10 +152,10 @@ class ModuloRecuperacion:
         logo_f = tk.Frame(inner_hdr, bg=C["panel"])
         logo_f.pack(side=tk.LEFT)
         tk.Label(logo_f, text="🪂  RECUPERACIÓN",
-                 font=("Courier New", 12, "bold"),
+                 font=("Courier New", 9, "bold"),
                  bg=C["panel"], fg=C["green_bright"]).pack(side=tk.LEFT)
         tk.Label(logo_f, text="   Misión Alpha-001",
-                 font=("Courier New", 8), bg=C["panel"],
+                 font=("Courier New", 7), bg=C["panel"],
                  fg=C["gray"]).pack(side=tk.LEFT)
 
         right_hdr = tk.Frame(inner_hdr, bg=C["panel"])
@@ -171,27 +166,22 @@ class ModuloRecuperacion:
 
         self._btn = tk.Button(
             btn_row, text="⏻  ACTIVAR",
-            font=("Courier New", 9, "bold"),
+            font=("Courier New", 8, "bold"),
             bg="#1A3A20", fg=C["green_bright"],
             activebackground="#2A5A30", activeforeground=C["green_bright"],
-            relief="flat", bd=0, padx=12, pady=5, cursor="hand2",
-            command=self._manejar_boton_principal)
+            relief="flat", bd=0, padx=8, pady=3, cursor="hand2",
+            command=self._toggle)
         self._btn.pack(side=tk.LEFT, padx=(0, 6))
 
         self._sys_lbl = tk.Label(
             btn_row, text="● INACTIVO",
-            font=("Courier New", 8, "bold"),
+            font=("Courier New", 7, "bold"),
             bg=C["panel"], fg=C["red_alert"])
         self._sys_lbl.pack(side=tk.LEFT, padx=(0, 8))
 
-        self._clock_lbl = tk.Label(
-            right_hdr, text="00:00:00",
-            font=("Courier New", 14, "bold"),
-            bg=C["panel"], fg=C["amber"])
-        self._clock_lbl.pack(anchor="e", pady=(2, 0))
         tk.Frame(hdr, bg=C["border_dim"], height=1).pack(fill=tk.X, side=tk.BOTTOM)
 
-        status_bar = tk.Frame(self.root, bg=C["card"], height=24)
+        status_bar = tk.Frame(self.root, bg=C["card"], height=18)
         status_bar.pack(fill=tk.X, padx=4)
         status_bar.pack_propagate(False)
 
@@ -215,19 +205,22 @@ class ModuloRecuperacion:
         self._modo_lbl.pack(side=tk.LEFT, padx=8)
 
         body = tk.Frame(self.root, bg=C["bg"])
-        body.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        body.pack(fill=tk.BOTH, expand=True, padx=4, pady=2)
+        body.columnconfigure(0, weight=10)
+        body.columnconfigure(1, weight=10)
+        body.columnconfigure(2, weight=12)
+        body.rowconfigure(0, weight=1)
 
         col_left = tk.Frame(body, bg=C["bg"])
-        col_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 3))
+        col_left.grid(row=0, column=0, sticky="nsew", padx=(0, 2))
         self._build_radar(col_left)
 
         col_center = tk.Frame(body, bg=C["bg"])
-        col_center.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=3)
+        col_center.grid(row=0, column=1, sticky="nsew", padx=2)
         self._build_mapa(col_center)
 
-        col_right = tk.Frame(body, bg=C["bg"], width=240)
-        col_right.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(3, 0))
-        col_right.pack_propagate(False)
+        col_right = tk.Frame(body, bg=C["bg"])
+        col_right.grid(row=0, column=2, sticky="nsew", padx=(2, 0))
         self._build_telemetria(col_right)
 
         self._build_console()
@@ -255,16 +248,15 @@ class ModuloRecuperacion:
         self._panel_header(frame, "TELEMETRÍA // DATOS EN VIVO")
 
         inner = tk.Frame(frame, bg=C["panel"])
-        inner.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        inner.pack(fill=tk.BOTH, expand=True, padx=4, pady=3)
 
         ley = tk.Frame(inner, bg=C["card"],
                        highlightbackground=C["border_dim"], highlightthickness=1)
-        ley.pack(fill=tk.X, pady=(0, 6))
+        ley.pack(fill=tk.X, pady=(0, 3))
         tk.Label(ley, text=" SEÑAL:", font=FONT_MONO_S,
                  bg=C["card"], fg=C["amber_dim"]).pack(side=tk.LEFT, padx=4)
         for state, txt, col in [(LED_OK,   "ACTIVO",   C["green_bright"]),
-                                 (LED_ERROR,"ERROR",    C["red_alert"]),
-                                 (LED_OFF,  "INACTIVO", C["gray"])]:
+                                 (LED_ERROR,"ERROR",    C["red_alert"])]:
             led = FocoLED(ley, bg_color=C["card"])
             led.set_state(state)
             led.pack(side=tk.LEFT, padx=(6, 1), pady=3)
@@ -281,70 +273,55 @@ class ModuloRecuperacion:
         ]:
             self._campo_telem(inner, lbl, var, key)
 
-        tk.Frame(inner, bg=C["border_dim"], height=1).pack(fill=tk.X, pady=6)
+        tk.Frame(inner, bg=C["border_dim"], height=1).pack(fill=tk.X, pady=3)
 
         hf = tk.Frame(inner, bg=C["card"],
                       highlightbackground=C["border"], highlightthickness=1)
-        hf.pack(fill=tk.X, pady=(0, 6))
+        hf.pack(fill=tk.X, pady=(0, 3))
         tk.Label(hf, text="T // HORA SISTEMA", font=FONT_MONO_S,
-                 bg=C["card"], fg=C["amber_dim"]).pack(pady=(4, 0))
+                 bg=C["card"], fg=C["amber_dim"]).pack(pady=(2, 0))
         self.hora_valor = tk.Label(
             hf, text="--:--:--",
-            font=("Courier New", 16, "bold"),
+            font=("Courier New", 12, "bold"),
             bg=C["card"], fg=C["amber"])
-        self.hora_valor.pack(pady=(0, 4))
+        self.hora_valor.pack(pady=(0, 2))
 
-        tk.Frame(inner, bg=C["border_dim"], height=1).pack(fill=tk.X, pady=(0, 6))
+        tk.Frame(inner, bg=C["border_dim"], height=1).pack(fill=tk.X, pady=(0, 3))
 
+        tk.Frame(inner, bg=C["border_dim"], height=1).pack(fill=tk.X, pady=2)
 
         self.conexion_label = tk.Label(
             inner, text="◌ ENLACE: DESCONECTADO",
             font=FONT_MONO_S, bg=C["panel"], fg=C["red_alert"])
-        self.conexion_label.pack(pady=(0, 4))
+        self.conexion_label.pack(pady=(0, 2))
 
-        tk.Frame(inner, bg=C["border_dim"], height=1).pack(fill=tk.X, pady=4)
+        tk.Frame(inner, bg=C["border_dim"], height=1).pack(fill=tk.X, pady=2)
 
-        # ── Estado de misión (sincronizado con Despegue) ────────
-        tk.Frame(inner, bg=C["border_dim"], height=1).pack(fill=tk.X, pady=4)
-        mf = tk.Frame(inner, bg=C["card"],
+        # ── Indicador de señal WiFi ─────────────────────────────
+        sf = tk.Frame(inner, bg=C["card"],
                       highlightbackground=C["border_dim"], highlightthickness=1)
-        mf.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(mf, text="MISIÓN (DESPEGUE)",
-                 font=FONT_MONO_S, bg=C["card"], fg=C["amber_dim"]).pack(pady=(4,0))
-        self._lbl_wifi_rec  = tk.Label(mf, text="WiFi: --",
-                                       font=FONT_MONO_S, bg=C["card"], fg=C["gray"])
-        self._lbl_wifi_rec.pack()
-        self._lbl_sig_rec   = tk.Label(mf, text="Señal: --",
-                                       font=FONT_MONO_S, bg=C["card"], fg=C["gray"])
-        self._lbl_sig_rec.pack()
-        self._lbl_estado_rec = tk.Label(mf, text="Estado: STANDBY",
-                                        font=("Courier New", 8, "bold"),
-                                        bg=C["card"], fg=C["amber"])
-        self._lbl_estado_rec.pack(pady=(0, 4))
+        sf.pack(fill=tk.X, pady=(0, 3))
+        tk.Label(sf, text="SEÑAL WiFi // UDP",
+                 font=FONT_MONO_S, bg=C["card"], fg=C["amber_dim"]).pack(pady=(2, 0))
+        self.canvas_wifi = tk.Canvas(sf, bg=C["card"], highlightthickness=0, height=52)
+        self.canvas_wifi.pack(fill=tk.X, padx=8, pady=(2, 6))
+        self._lbl_wifi_pct = tk.Label(sf, text="-- %  SIN SEÑAL",
+                                      font=FONT_MONO_S, bg=C["card"], fg=C["gray"])
+        self._lbl_wifi_pct.pack(pady=(0, 4))
 
-        tk.Frame(inner, bg=C["border_dim"], height=1).pack(fill=tk.X, pady=4)
-
-        for txt, cmd, bg, fc in [
-            ("[ REINICIAR ]",   self._confirmar_reiniciar,  "#1A1200", C["amber"]),
-            ("[ CALIBRAR ]",    self._confirmar_calibrar,   "#0D1A2A", C["cyan"]),
-            ("[ BORRAR RUTA ]", self._confirmar_borrar_ruta,"#1A1A1A", C["gray"]),
-        ]:
-            tk.Button(inner, text=txt, font=FONT_MONO_S,
-                      bg=bg, fg=fc, bd=0, pady=5,
-                      activebackground=bg, activeforeground=fc,
-                      cursor="hand2", command=cmd).pack(fill=tk.X, pady=2)
+        tk.Frame(inner, bg=C["border_dim"], height=1).pack(fill=tk.X, pady=2)
 
     def _build_console(self):
         frame = tk.Frame(self.root, bg=C["panel"],
                          highlightbackground=C["border"],
-                         highlightthickness=1, height=80)
+                         highlightthickness=1, height=110)
         frame.pack(fill=tk.X, padx=4, pady=(0, 4))
         frame.pack_propagate(False)
         self._panel_header(frame, "CONSOLA // REGISTRO DE EVENTOS")
         self._console = tk.Text(
             frame, bg=C["radar_bg"], fg=C["green"],
-            font=("Courier New", 7), relief=tk.FLAT,
-            state=tk.DISABLED, wrap=tk.WORD, height=4,
+            font=("Courier New", 6), relief=tk.FLAT,
+            state=tk.DISABLED, wrap=tk.WORD, height=6,
             insertbackground=C["green_bright"], highlightthickness=0)
         sb = ttk.Scrollbar(frame, orient="vertical", command=self._console.yview)
         self._console.configure(yscrollcommand=sb.set)
@@ -352,11 +329,11 @@ class ModuloRecuperacion:
         sb.pack(side=tk.RIGHT, fill=tk.Y, pady=(0, 4))
 
     def _panel_header(self, parent, titulo):
-        h = tk.Frame(parent, bg=C["card"], height=22)
+        h = tk.Frame(parent, bg=C["card"], height=18)
         h.pack(fill=tk.X)
         h.pack_propagate(False)
         tk.Frame(h, bg=C["border_hi"], width=3).pack(side=tk.LEFT, fill=tk.Y)
-        tk.Label(h, text=f"  {titulo}", font=FONT_MONO_S,
+        tk.Label(h, text=f"  {titulo}", font=FONT_HEADER,
                  bg=C["card"], fg=C["amber"], anchor="w").pack(
                  side=tk.LEFT, fill=tk.Y)
         return h
@@ -364,17 +341,17 @@ class ModuloRecuperacion:
     def _campo_telem(self, parent, label, var_name, campo_key):
         row = tk.Frame(parent, bg=C["bg"],
                        highlightbackground=C["border_dim"], highlightthickness=1)
-        row.pack(fill=tk.X, pady=2)
+        row.pack(fill=tk.X, pady=1)
 
         tk.Label(row, text=f" {label}", font=FONT_MONO_S,
                  bg=C["card"], fg=C["amber_dim"], width=9,
-                 anchor="w").pack(side=tk.LEFT, fill=tk.Y, ipady=4)
+                 anchor="w").pack(side=tk.LEFT, fill=tk.Y, ipady=2)
         tk.Frame(row, bg=C["border_dim"], width=1).pack(side=tk.LEFT, fill=tk.Y)
 
         valor = tk.Label(row, text="───────",
-                         font=("Courier New", 9, "bold"),
+                         font=("Courier New", 8, "bold"),
                          bg=C["bg"], fg=C["green_bright"],
-                         anchor="e", padx=6, pady=4)
+                         anchor="e", padx=4, pady=2)
         valor.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         setattr(self, var_name, valor)
 
@@ -415,30 +392,56 @@ class ModuloRecuperacion:
                       "velocidad", "distancia"]:
             self._set_led(campo, state)
 
-    def _actualizar_panel_despegue(self):
-        """Refresca el mini-panel que muestra datos de Despegue."""
+    def _dibujar_wifi(self):
+        c = self.canvas_wifi
+        c.delete("all")
+        w = c.winfo_width()
+        h = c.winfo_height()
+        if w < 2 or h < 2:
+            return
+
+        # Leer señal del shared_state (0-100)
         try:
             ss = SS.snapshot()
-            wifi = ss.get("wifi_strength", 0)
-            sig  = ss.get("signal_quality", 0)
-            wind = ss.get("wind_speed", 0.0)
-            est  = ss.get("launch_state", "STANDBY")
-            on   = ss.get("system_on", False)
-
-            col_w = C["green_bright"] if wifi >= 70 else C["amber"] if wifi >= 40 else C["red_alert"]
-            col_s = C["green_bright"] if sig  >= 80 else C["amber"] if sig  >= 50 else C["red_alert"]
-            col_e = {
-                "LANZAMIENTO": C["red_alert"],
-                "ARMADO":      C["green_bright"],
-                "ACTIVO":      C["cyan"],
-                "ABORTADO":    C["amber"],
-            }.get(est, C["gray"])
-
-            self._lbl_wifi_rec.config( text=f"WiFi:   {wifi}%  [UDP]",  fg=col_w if on else C["gray"])
-            self._lbl_sig_rec.config(  text=f"Señal:  {sig}%",   fg=col_s if on else C["gray"])
-            self._lbl_estado_rec.config(text=f"Estado: {est}", fg=col_e)
+            pct = ss.get("wifi_strength", 0) if self.sistema_activo else 0
         except Exception:
-            pass
+            pct = 0
+
+        # 5 barras tipo celular
+        n_barras = 5
+        bar_w = 14
+        gap   = 8
+        total = n_barras * bar_w + (n_barras - 1) * gap
+        x0    = (w - total) / 2
+        umbral = pct / 100 * n_barras  # cuántas barras encender
+
+        for i in range(n_barras):
+            bx    = x0 + i * (bar_w + gap)
+            bh    = int((h - 10) * (i + 1) / n_barras)
+            by    = h - bh - 2
+            activa = (i + 1) <= umbral
+
+            if activa:
+                if pct >= 70:   col = C["green_bright"]
+                elif pct >= 40: col = C["amber"]
+                else:           col = C["red_alert"]
+            else:
+                col = C["gray_dim"]
+
+            c.create_rectangle(bx, by, bx + bar_w, h - 2,
+                               fill=col, outline="", width=0)
+
+        # Etiqueta de porcentaje y estado
+        if pct >= 70:
+            txt, fg = f"{pct}%  FUERTE",   C["green_bright"]
+        elif pct >= 40:
+            txt, fg = f"{pct}%  DÉBIL",    C["amber"]
+        elif pct > 0:
+            txt, fg = f"{pct}%  MUY DÉBIL", C["red_alert"]
+        else:
+            txt, fg = "-- %  SIN SEÑAL",   C["gray"]
+
+        self._lbl_wifi_pct.config(text=txt, fg=fg)
 
     def _dibujar_radar(self):
         c = self.canvas_radar
@@ -566,25 +569,8 @@ class ModuloRecuperacion:
         c.create_text(w-8, h-8, text=f"LON {self.longitud:.4f}°",
                       fill=C["amber_dim"], font=("Courier New", 7), anchor="se")
 
-    def _dibujar_bateria(self):
-        c = self._bat_canvas
-        c.delete("all")
-        w = c.winfo_width()
-        if w < 4:
-            return
-        pct = max(0, min(100, self.bateria)) / 100
-        c.create_rectangle(0, 2, w-6, 13, fill=C["bg"], outline=C["border_dim"])
-        col = C["green"] if pct > 0.4 else C["amber"] if pct > 0.2 else C["red_alert"]
-        bar_w = int((w-8) * pct)
-        if bar_w > 0:
-            c.create_rectangle(1, 3, bar_w, 12, fill=col, outline="")
-        c.create_rectangle(w-5, 5, w-1, 10, fill=C["gray"], outline="")
-        c.create_text(w//2, 7, text=f"{self.bateria:.0f}%",
-                      fill=C["white"], font=("Courier New", 7))
-
     def _loop(self):
         now_str = datetime.now().strftime("%H:%M:%S")
-        self._clock_lbl.config(text=now_str)
         self.hora_valor.config(text=now_str)
         self._tick += 1
 
@@ -621,8 +607,9 @@ class ModuloRecuperacion:
                     lbl.config(text=f"{self.altitud:.0f}m")
 
             if self._tick % 30 == 0:
+                src = "WiFi"
                 self._log(
-                    f"[WIFI] POS {self.latitud:.5f}° {self.longitud:.5f}°  "
+                    f"[{src}] POS {self.latitud:.5f}° {self.longitud:.5f}°  "
                     f"ALT {self.altitud:.1f}m  DST {self.distancia:.0f}m")
 
             ahora = time.time()
@@ -631,9 +618,9 @@ class ModuloRecuperacion:
                 self._guardar_json()
 
         self._actualizar_leds()
-        self._actualizar_panel_despegue()
         self._dibujar_radar()
         self._dibujar_mapa_sim()
+        self._dibujar_wifi()
         self.root.after(100, self._loop)
 
     def _guardar_json(self):
@@ -661,6 +648,25 @@ class ModuloRecuperacion:
             self._log(f">>> ERROR al guardar JSON: {e}")
 
     def _toggle(self):
+        if self.sistema_activo:
+            # Pedir confirmación para DESACTIVAR
+            resultado = messagebox.askyesno(
+                "DESACTIVAR SISTEMA",
+                "¿Estás seguro de que deseas DESACTIVAR el sistema?",
+                icon=messagebox.WARNING
+            )
+            if not resultado:
+                return
+        else:
+            # Pedir confirmación para ACTIVAR
+            resultado = messagebox.askyesno(
+                "ACTIVAR SISTEMA",
+                "¿Estás seguro de que deseas ACTIVAR el sistema?",
+                icon=messagebox.QUESTION
+            )
+            if not resultado:
+                return
+        
         self.sistema_activo = not self.sistema_activo
         if self.sistema_activo:
             self._session_start = datetime.now().isoformat(timespec="milliseconds")
@@ -670,73 +676,64 @@ class ModuloRecuperacion:
                              bg="#3D0B0B", fg=C["red_alert"])
             self._sys_lbl.config(text="◉ ACTIVO", fg=C["green_bright"])
             self.conexion_label.config(text="◉ ENLACE: ESTABLE", fg=C["green_bright"])
-            self._log(">>> SISTEMA ACTIVADO — Inicio de seguimiento")
+            self._log(">>> ✓ SISTEMA ACTIVADO — Inicio de seguimiento")
             for key, lbl in self._status_items:
                 if key == "SISTEMA":        lbl.config(text="ACTIVO",    fg=C["green_bright"])
                 elif key == "COMUNICACION": lbl.config(text="ENLACE",    fg=C["cyan"])
                 elif key == "GPS":          lbl.config(text="BLOQUEADO", fg=C["green_bright"])
+            # Iniciar escucha WiFi
+            self.iniciar_conexion_wifi()
         else:
             self._btn.config(text="⏻  ACTIVAR",
                              bg="#1A3A20", fg=C["green_bright"])
             self._sys_lbl.config(text="● INACTIVO", fg=C["red_alert"])
             self.conexion_label.config(text="◌ ENLACE: DESCONECTADO", fg=C["red_alert"])
-            self._log(">>> SISTEMA DESACTIVADO")
+            self._log(">>> ✓ SISTEMA DESACTIVADO")
             for key, lbl in self._status_items:
                 if key in ("SISTEMA", "COMUNICACION", "GPS"):
                     lbl.config(
                         text={"SISTEMA":"NOMINAL","COMUNICACION":"SIN ENLACE","GPS":"EN ESPERA"}[key],
                         fg=C["amber_dim"])
+            # Detener escucha WiFi
+            self.detener_conexion_wifi()
     # ════════════════════════════════════════════════════════════════
     # ── NUEVO SISTEMA DE ENLACE WI-FI (UDP) ──
     # ════════════════════════════════════════════════════════════════
-
-    def _manejar_boton_principal(self):
-        """Manejador del botón principal con confirmación"""
-        if self.sistema_activo:
-            # Sistema activo: pedir confirmación para desactivar
-            if messagebox.askyesno(
-                "Confirmar Desactivación",
-                "¿Estás seguro de que deseas desactivar el sistema?\n\n"
-                "Se detendrá la escucha de Wi-Fi y se finalizarán todos los procesos."):
-                self._desactivar_sistema()
-            else:
-                self._log(">>> Desactivación cancelada")
-        else:
-            # Sistema inactivo: pedir confirmación para activar
-            if messagebox.askyesno(
-                "Confirmar Activación",
-                "¿Estás seguro de que deseas activar el sistema?\n\n"
-                "Se iniciará la escucha de telemetría vía Wi-Fi en puerto 8080."):
-                self.iniciar_conexion_wifi()
-            else:
-                self._log(">>> Activación cancelada")
 
     def iniciar_conexion_wifi(self):
         if getattr(self, 'escuchando_wifi', False):
             self._log(">>> El puerto ya está abierto, esperando datos...")
             return
-            
+
+        # Verificar si el puerto 8080 ya está ocupado (otro proceso lo tiene)
+        import socket as _sock
+        test = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
+        try:
+            test.bind(("", 8080))
+            test.close()
+            puerto_libre = True
+        except OSError:
+            test.close()
+            puerto_libre = False
+
+        if not puerto_libre:
+            # El main.py ya tiene el puerto — solo leer shared_state
+            self._log(">>> Puerto 8080 ocupado — leyendo desde shared_state (modo espejo)")
+            self.escuchando_wifi = True
+            self._modo_espejo = True
+            return
+
+        self._modo_espejo = False
         self.escuchando_wifi = True
         hilo_wifi = threading.Thread(target=self._escuchar_udp, daemon=True)
         hilo_wifi.start()
         self._log(">>> Escuchando telemetría vía Wi-Fi (UDP) en puerto 8080...")
-        
-        # --- EL ARREGLO: "Despertamos" la interfaz visual ---
-        if not self.sistema_activo:
-            self._toggle()
         
         # Cambiamos la etiqueta para mostrar que estamos en Wi-Fi
         try:
             self.conexion_label.config(text="● ENLACE: CONECTADO (WIFI)", fg=C["green_bright"])
         except:
             pass
-
-    def _desactivar_sistema(self):
-        """Desactiva el sistema y detiene la escucha Wi-Fi"""
-        if self.base_establecida:
-            self._log(f">>> Base utilizada: {self.base_latitud:.6f}°N, {self.base_longitud:.6f}°W")
-        self.detener_conexion_wifi()
-        self._toggle()
 
     def detener_conexion_wifi(self):
         """Llama a esta función para apagar la escucha"""
@@ -767,16 +764,11 @@ class ModuloRecuperacion:
                     lat_actual = float(datos_gps["latitud"])
                     lon_actual = float(datos_gps["longitud"])
                     
-                    # Establecer la base con la primera lectura
-                    if not self.base_establecida:
-                        self.base_latitud = lat_actual
-                        self.base_longitud = lon_actual
-                        self.base_establecida = True
-                        self._log(f"✓ Base establecida: {self.base_latitud:.6f}°N, {self.base_longitud:.6f}°W")
-                    
-                    # Usar base dinámica
-                    BASE_LAT = self.base_latitud
-                    BASE_LON = self.base_longitud
+                    # --- ¡AQUÍ ESTÁ LA CLAVE PARA SINCRONIZAR MAPA Y RADAR! ---
+                    # Revisa que estos sean los mismos números que le pusiste a tu mapa
+                    BASE_LAT = 22.16100
+                    BASE_LON = -102.26877 # <--- CAMBIA ESTO POR TU LONGITUD
+                    # ----------------------------------------------------------
                     
                     # Calculamos la Distancia real en metros (Haversine)
                     R = 6371000 
@@ -808,8 +800,9 @@ class ModuloRecuperacion:
                         "altitud": float(datos_gps["altitud"]),
                         "velocidad": float(datos_gps.get("velocidad", 0.0)),
                         "hora_gps": datos_gps.get("hora_gps", "--:--:--"),
-                        "distancia": distancia_calculada, 
-                        "angulo_radar": angulo_pantalla 
+                        "distancia": distancia_calculada,
+                        "angulo_radar": angulo_pantalla,
+                        "wifi_strength": int(datos_gps.get("rssi", 0)),
                     }
                     
                     try:
@@ -827,55 +820,6 @@ class ModuloRecuperacion:
                 
         sock.close()
 
-    def _reiniciar(self):
-        self.latitud=self.base_latitud; self.longitud=self.base_longitud; self.altitud=2500.0
-        self.distancia=1500.0; self.velocidad=0
-        self.angulo_radar=0; self.hora_gps="--:--:--"; self.trayectoria=[]
-        self.base_establecida = False  # Permitir que se reestablezca la base en la próxima lectura
-        self._log(">>> SISTEMA REINICIADO — Base será reestablecida con próxima lectura GPS")
-
-    def _confirmar_reiniciar(self):
-        """Muestra confirmación antes de reiniciar"""
-        if messagebox.askyesno(
-            "Confirmar Reinicio",
-            "¿Estás seguro de que deseas reiniciar el sistema?\n\n"
-            "Se restaurarán todos los valores por defecto."):
-            self._reiniciar()
-        else:
-            self._log(">>> Reinicio cancelado")
-
-    def _borrar_ruta(self):
-        self.trayectoria = []
-        self._log(">>> Trayectoria borrada")
-
-    def _confirmar_borrar_ruta(self):
-        """Muestra confirmación antes de borrar ruta"""
-        if messagebox.askyesno(
-            "Confirmar Borrar Ruta",
-            "¿Estás seguro de que deseas borrar la trayectoria?\n\n"
-            "Esta acción no se puede deshacer."):
-            self._borrar_ruta()
-        else:
-            self._log(">>> Borrado de ruta cancelado")
-
-    def _calibrar(self):
-        self.conexion_label.config(text="◈ CALIBRANDO...", fg=C["amber"])
-        self._log(">>> Iniciando secuencia de calibración...")
-        self.root.after(2000, self._calibrar_ok)
-
-    def _confirmar_calibrar(self):
-        """Muestra confirmación antes de calibrar"""
-        if messagebox.askyesno(
-            "Confirmar Calibración",
-            "¿Estás seguro de que deseas iniciar la calibración?\n\n"
-            "Este proceso tomará aproximadamente 2 segundos."):
-            self._calibrar()
-        else:
-            self._log(">>> Calibración cancelada")
-
-    def _calibrar_ok(self):
-        self.conexion_label.config(text="◉ ENLACE: ESTABLE", fg=C["green_bright"])
-        self._log(">>> Calibración completa — todos los sensores nominales")
 if __name__ == "__main__":
     root = tk.Tk()
     root.title("Módulo de Recuperación - Equipo 4")
