@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Entornos virtuales
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Bases de datos generadas por los modulos en tiempo de ejecucion
+telemetria_aterrizaje.db
+telemetria_log.json
+
+# Sistemas operativos
+.DS_Store
+Thumbs.db
+desktop.ini

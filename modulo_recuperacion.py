@@ -705,11 +705,11 @@ class ModuloRecuperacion:
             self._log(">>> El puerto ya está abierto, esperando datos...")
             return
 
-        # Verificar si el puerto 8080 ya está ocupado (otro proceso lo tiene)
+        # Verificar si el puerto 8081 ya está ocupado (otro proceso lo tiene)
         import socket as _sock
         test = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
         try:
-            test.bind(("", 8080))
+            test.bind(("", 8081))
             test.close()
             puerto_libre = True
         except OSError:
@@ -718,7 +718,7 @@ class ModuloRecuperacion:
 
         if not puerto_libre:
             # El main.py ya tiene el puerto — solo leer shared_state
-            self._log(">>> Puerto 8080 ocupado — leyendo desde shared_state (modo espejo)")
+            self._log(">>> Puerto 8081 ocupado — leyendo desde shared_state (modo espejo)")
             self.escuchando_wifi = True
             self._modo_espejo = True
             return
@@ -727,7 +727,7 @@ class ModuloRecuperacion:
         self.escuchando_wifi = True
         hilo_wifi = threading.Thread(target=self._escuchar_udp, daemon=True)
         hilo_wifi.start()
-        self._log(">>> Escuchando telemetría vía Wi-Fi (UDP) en puerto 8080...")
+        self._log(">>> Escuchando telemetría vía Wi-Fi (UDP) en puerto 8081...")
         
         # Cambiamos la etiqueta para mostrar que estamos en Wi-Fi
         try:
@@ -742,8 +742,8 @@ class ModuloRecuperacion:
 
     def _escuchar_udp(self):
         """Hilo en segundo plano que atrapa los paquetes de la ESP32"""
-        UDP_IP = "0.0.0.0" 
-        UDP_PORT = 8080    
+        UDP_IP = "0.0.0.0"
+        UDP_PORT = 8081
         
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
