@@ -1,8 +1,12 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║     ROCKET MISSION CONTROL — PANTALLA UNIFICADA v1.0            ║
+║     ROCKET MISSION CONTROL — PANTALLA UNIFICADA v1.1            ║
 ║     MISION ALPHA-001 // GROUND CONTROL STATION                  ║
+║     + MAVLink / ESP32 (Equipo 1)                                ║
 ╠══════════════════════════════════════════════════════════════════╣
+║  Dependencias:                                                  ║
+║    pip install pyserial                                         ║
+║                                                                 ║
 ║  Para agregar un módulo nuevo:                                  ║
 ║    1. El equipo entrega su archivo modulo_XXX.py                ║
 ║    2. Descomentar el import correspondiente abajo               ║
@@ -15,21 +19,21 @@ import tkinter as tk
 import time
 
 # ── Colores globales de la barra principal ────────────────────────
-CYAN    = "#00D4FF"
-AMBER   = "#FFB800"
-BLUE_LT = "#1E90FF"
+CYAN      = "#00D4FF"
+AMBER     = "#FFB800"
+BLUE_LT   = "#1E90FF"
 TEXT_GRAY = "#4A6080"
 TEXT_DARK = "#1E2D40"
-MONO    = "Courier New"
+MONO      = "Courier New"
 
 # ══════════════════════════════════════════════════════════════════
 #  IMPORTS DE MÓDULOS
 #  Cuando un equipo entregue su archivo, descomentar su línea
 # ══════════════════════════════════════════════════════════════════
-from modulo_despegue     import ModuloDespegue       # ✓ Equipo 1 — listo
+from modulo_despegue     import ModuloDespegue       # ✓ Equipo 1 — MAVLink integrado
 from modulo_recuperacion import ModuloRecuperacion   # ✓ Equipo 4 — listo
-from modulo_despliegue   import ModuloDespliegue     # ✓ Equipo 2 — listo
-from modulo_aterrizaje   import ModuloAterrizaje     # ⏳ Equipo 3 — usar plantilla
+from modulo_despliegue   import ModuloDespliegue     # ✓ Equipo 2 — listo  (D mayúscula)
+from modulo_aterrizaje   import ModuloAterrizaje     # ✓ Equipo 3 — listo
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -39,11 +43,10 @@ class MisionControlCenter(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("MISION ALPHA-001 — ROCKET CONTROL CENTER")
-        self.geometry("1600x900")
-        self.minsize(1200, 700)
+        self.geometry("1920x1200")
+        self.minsize(1400, 900)
         self.configure(bg="#010408")
 
-        # Layout con grid para control total del espacio
         self.rowconfigure(0, weight=0)   # titlebar fija
         self.rowconfigure(1, weight=1)   # módulos se expanden
         self.rowconfigure(2, weight=0)   # footer fijo
@@ -85,39 +88,35 @@ class MisionControlCenter(tk.Tk):
     # ── Cuadrícula 2×2 ────────────────────────────────────────────
     def _build_grid(self):
         grid = tk.Frame(self, bg="#0A1020")
-        grid.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
+        grid.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
 
-        # uniform="row" y uniform="col" garantizan partes exactamente iguales
-        grid.rowconfigure(0, weight=1, uniform="row")
-        grid.rowconfigure(1, weight=1, uniform="row")
+        # Configurar grid: todas las divisiones iguales (2x2 uniforme)
+        grid.rowconfigure(0, weight=1, uniform="row")      
+        grid.rowconfigure(1, weight=1, uniform="row")      
         grid.columnconfigure(0, weight=1, uniform="col")
         grid.columnconfigure(1, weight=1, uniform="col")
 
-        # ── Cuadrante 1: DESPEGUE (superior izquierdo) ───────────
+        # ── Cuadrante 1: DESPEGUE — MAVLink via ESP32 ────────────
         q1 = tk.Frame(grid, bg="#04080F",
-                      highlightbackground=CYAN, highlightthickness=1)
+                      highlightbackground=CYAN, highlightthickness=2)
         q1.grid(row=0, column=0, sticky="nsew", padx=(0, 2), pady=(0, 2))
         ModuloDespegue(q1)
 
-        # ── Cuadrante 2: DESPLIEGUE (superior derecho) ───────────
-        #  ⏳ Equipo 2: cuando entreguen su archivo, ya está importado arriba.
-        #     Solo hay que reemplazar ModuloDespliegue(q2) — que ya usa
-        #     la plantilla — por su implementación real. No hay que cambiar nada más.
+        # ── Cuadrante 2: DESPLIEGUE ───────────────────────────────
         q2 = tk.Frame(grid, bg="#04080F",
-                      highlightbackground="#FF6B00", highlightthickness=1)
+                      highlightbackground="#FF6B00", highlightthickness=2)
         q2.grid(row=0, column=1, sticky="nsew", padx=(2, 0), pady=(0, 2))
         ModuloDespliegue(q2)
 
-        # ── Cuadrante 3: ATERRIZAJE (inferior izquierdo) ─────────
-        #  ⏳ Equipo 3: mismo caso que el Equipo 2.
+        # ── Cuadrante 3: ATERRIZAJE ───────────────────────────────
         q3 = tk.Frame(grid, bg="#04080F",
-                      highlightbackground="#A855F7", highlightthickness=1)
+                      highlightbackground="#A855F7", highlightthickness=2)
         q3.grid(row=1, column=0, sticky="nsew", padx=(0, 2), pady=(2, 0))
         ModuloAterrizaje(q3)
 
-        # ── Cuadrante 4: RECUPERACIÓN (inferior derecho) ─────────
+        # ── Cuadrante 4: RECUPERACIÓN ─────────────────────────────
         q4 = tk.Frame(grid, bg="#080c08",
-                      highlightbackground="#2aff2a", highlightthickness=1)
+                      highlightbackground="#2aff2a", highlightthickness=2)
         q4.grid(row=1, column=1, sticky="nsew", padx=(2, 0), pady=(2, 0))
         ModuloRecuperacion(q4)
 
@@ -129,7 +128,7 @@ class MisionControlCenter(tk.Tk):
         tk.Frame(f, bg=BLUE_LT, height=1).pack(fill="x", side="top")
         tk.Label(f,
                  text="SISTEMA CRITICO — USO EXCLUSIVO OPERADORES AUTORIZADOS  |  "
-                      "MODULOS: DESPEGUE ✓  DESPLIEGUE ⏳  ATERRIZAJE ⏳  RECUPERACION ✓",
+                      "MODULOS: DESPEGUE ✓(MAVLink)  DESPLIEGUE ✓  ATERRIZAJE ✓  RECUPERACION ✓",
                  font=(MONO, 7), bg="#010408", fg=TEXT_GRAY).pack(side="left", padx=14)
         self.dot = tk.Label(f, text="●", font=(MONO, 10, "bold"),
                             bg="#010408", fg=TEXT_DARK)
