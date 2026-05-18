@@ -1299,22 +1299,157 @@ class ModuloDespliegue:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  PRUEBA LOCAL
+#  LECTURA DATOS ESP32
 # ═══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
+    import threading
+    import socket
+    import json
+
+    # ── CONFIGURACIÓN UDP ──────────────────────────────────
+    PUERTO_UDP = 8080
+
+    # ── VARIABLES GLOBALES PARA DETECTAR FASES ────────────
+    _alt_ant      = 0.0
+    _subiendo     = False
+    _apo_det      = False
+    _dep_done     = False
+    _dep_ant      = False
+    _cnt_baj      = 0
+    _cnt_est      = 0
+    _alt_est_ref  = 0.0
+
+    def _calcular_fase(datos: dict) -> str:
+        global _alt_ant, _subiendo, _apo_det
+        global _dep_done, _dep_ant
+        global _cnt_baj, _cnt_est, _alt_est_ref
+
+        altitud    = datos.get("altitud",    0.0)
+        desplegado = datos.get("desplegado", False)
+
+        # DESPLIEGUE confirmado por ESP32
+        if desplegado and not _dep_ant:
+            _dep_ant  = True
+            _dep_done = True
+            _apo_det  = True
+            print("[FASE] Despliegue confirmado por ESP32")
+            return "DESPLIEGUE"
+
+        # Delta entre lecturas
+        delta    = altitud - _alt_ant
+        _alt_ant = altitud
+
+        # Detectar ascenso
+        if delta > 0.03:
+            _subiendo = True
+            _cnt_baj  = 0
+            _cnt_est  = 0
+
+        # Lecturas bajando
+        if delta < -0.03:
+            _cnt_baj += 1
+            _cnt_est  = 0
+        elif abs(delta) <= 0.05:
+            _cnt_est     += 1
+            _alt_est_ref  = altitud
+        else:
+            _cnt_est = 0
+
+        # APOGEO detectado → DESPLIEGUE
+        if _subiendo and _cnt_baj >= 3 and not _apo_det:
+            _apo_det  = True
+            _dep_done = True
+            print("[FASE] Apogeo detectado localmente → DESPLIEGUE")
+            return "DESPLIEGUE"
+
+        # ATERRIZAJE — estable 2 segundos cerca del suelo
+        if _dep_done and _cnt_est >= 10 and abs(_alt_est_ref) < 2.0:
+            return "ATERRIZAJE"
+
+        # DESCENSO — después del despliegue
+        if _dep_done:
+            return "DESCENSO"
+
+        # ASCENSO
+        if altitud > 0.1 and _subiendo:
+            return "ASCENSO"
+
+        # STANDBY
+        return "STANDBY"
+
+    def servidor_udp(modulo_ref, root_ref):
+        """Servidor UDP que recibe datos del ESP32"""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("0.0.0.0", PUERTO_UDP))
+        sock.settimeout(1.0)
+        print(f"[UDP] Escuchando en puerto {PUERTO_UDP}...")
+        print(f"[UDP] Esperando datos del ESP32...")
+
+        while True:
+            try:
+                datos_raw, addr = sock.recvfrom(1024)
+                mensaje = datos_raw.decode("utf-8").strip()
+                datos   = json.loads(mensaje)
+
+                # Solo procesar mensajes de tipo despliegue
+                if datos.get("type", "") != "despliegue":
+                    continue
+
+                fase = _calcular_fase(datos)
+
+                print(f"[ESP32] Alt: {datos.get('altitud', 0):.2f}m | "
+                      f"Desplegado: {datos.get('desplegado', False)} | "
+                      f"Fase: {fase} | "
+                      f"Desde: {addr[0]}")
+
+                datos_app = {
+                    "altitud_m":    datos.get("altitud",   0.0),
+                    "velocidad_ms": datos.get("velocidad", 0.0),
+                    "bateria_pct":  datos.get("bateria",   100.0),
+                    "fase":         fase,
+                }
+
+                # Pasar datos a la app en el hilo principal de Tkinter
+                root_ref.after(
+                    0, lambda d=datos_app: modulo_ref.recibir_datos(d))
+
+            except socket.timeout:
+                continue
+            except json.JSONDecodeError as e:
+                print(f"[ERROR JSON] {e}")
+            except Exception as e:
+                print(f"[ERROR UDP] {e}")
+
     def sim_rec(payload):
         print("\n[RECUPERACIÓN] Estado final:")
         for k, v in payload.items():
             print(f"  {k}: {v}")
 
+    # ── ABRIR LA APP ───────────────────────────────────────
     root = tk.Tk()
     root.title("Módulo Despliegue v3 — Sala de Control")
     root.state("zoomed")
     root.configure(bg=BG_ROOT)
+
     frame = tk.Frame(root, bg=BG_ROOT)
     frame.pack(fill="both", expand=True)
 
     modulo = ModuloDespliegue(frame)
     modulo.on_despliegue_confirmado = sim_rec
-    root.after(1000, modulo._demo_tick)
+
+    # ── LANZAR SERVIDOR UDP EN HILO SEPARADO ───────────────
+    hilo = threading.Thread(
+        target=servidor_udp,
+        args=(modulo, root),
+        daemon=True
+    )
+    hilo.start()
+
+    # Demo desactivado — recibe datos reales del ESP32
+    # Para activar el demo descomenta la siguiente línea:
+    # root.after(1000, modulo._demo_tick)
+
+    print("[APP] Interfaz gráfica iniciada")
+    print("[APP] Esperando datos UDP del ESP32 en puerto 8080...")
+
     root.mainloop()
