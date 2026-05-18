@@ -47,22 +47,22 @@
 
 El módulo presenta un wizard de 5 pasos visualmente impecable: encender sistema → conectar cohete → verificar señal RF → confirmar enlace → cuenta regresiva → liftoff/abort. Estéticamente es el más cuidado: paleta cyan/ámbar coherente, animaciones, telemetría con tags, indicadores LED, etc.
 
-**El problema crítico:** TODO el módulo es teatro. No hay comunicación real con ESP32 a pesar del header que dice "MAVLink integrado".
+**El problema crítico:** el módulo no implementa la funcionalidad que su interfaz sugiere. A pesar del header que declara "MAVLink integrado", no existe comunicación real con el ESP32: ningún socket se abre, ningún mensaje se envía y no se lee información externa en ningún punto.
 
 ### Hallazgos graves
 
 1. **`_start_wifi_sim()` líneas 391-409** — la "intensidad de señal WiFi" se inventa con `random.randint(-3, 5)`. No abre ningún socket.
 2. **`_start_wind_sim()` líneas 411-424** — la velocidad del viento se inventa con `random.uniform(0, 45)`.
 3. **`_verify_done()` línea 487** — la "calidad de señal RF" se inventa con `random.randint(70, 99)`. La verificación siempre va a estar entre 70 y 99 (pasa siempre el threshold de 80% en ~80% de los casos por puro azar).
-4. **`_do_connect()` línea 463 + `_connect_done()` línea 472** — el botón "CONECTAR" solo dispara un `after(2000, ...)` que pone un label en verde. No abre socket, no manda nada, no escucha. Es un timer cosmético.
+4. **`_do_connect()` línea 463 + `_connect_done()` línea 472** — el botón "CONECTAR" solo dispara un `after(2000, ...)` que actualiza un label a verde. No abre socket, no envía datos, no escucha — es un temporizador que modifica únicamente la interfaz local.
 5. **`_do_launch()` línea 516** — el objetivo declarado del módulo era enviar la señal de despegue al ESP32. En lugar de eso, se ejecuta `_cdown()` que solo cambia el label local `T-10, T-9, ...`. **Nunca se transmite la orden de lanzamiento.**
 6. No usan `shared_state` para publicar el estado del sistema, aunque `shared_state.py` tiene un slot `"launch_state"` esperándolo.
 
 ### Señales de uso de IA
 
-- Estructura de docstring decorativa (`╔══...══╗`) consistente con generación AI.
+- Estructura de docstring con marcos ASCII tipo box-drawing (`╔══...══╗`) consistente con patrones de generación asistida.
 - Comentarios redundantes en cada bloque (`# ── Reloj ──`, `# ── Botón ──`).
-- Sobrecarga visual: 6 subsistemas decorativos (BATERIA/GPS/GIROSCOPIO/...) que todos cambian a "OK" al mismo tiempo, sin lógica real.
+- Sobrecarga visual: 6 subsistemas (BATERIA/GPS/GIROSCOPIO/ALTIMETRO/PROPULSION/TELEMETRIA) que cambian todos a "OK" simultáneamente en `_set_device()` sin verificación individual de cada componente.
 - Animación de cuenta regresiva con colores por umbral (`RED if n<=3 else AMBER if n<=6 else CYAN`) — patrón típico de IA.
 - **Veredicto IA:** ALTA probabilidad de generación asistida por IA, con poca o nula adaptación al objetivo real del módulo.
 
@@ -85,7 +85,7 @@ El módulo presenta un wizard de 5 pasos visualmente impecable: encender sistema
 
 ### Comentario para el equipo
 
-El trabajo visual es excelente — la UI es la más pulida de los 4 cuadrantes. **Pero el objetivo del módulo no se cumplió.** Su rol era **enviar la señal de despegue al ESP32** y **leer su estado real**. Lo que entregaron es un mockup animado: la señal WiFi, el viento, la verificación de señal RF y la cuenta regresiva son todos `random.randint(...)`. El botón "ACTIVAR DESPEGUE" debería abrir un socket o serial al ESP32 y mandar un comando `LAUNCH` — en lugar de eso, solo cuenta hacia atrás localmente. La consigna decía "no simular, controlar y monitorear el cohete real". Les recomendamos: (a) eliminar `_start_wifi_sim` y `_start_wind_sim`, (b) leer wifi/viento desde `shared_state` o desde un UDP listener, (c) que `_do_launch` envíe `{"cmd":"launch"}` por socket al ESP32, (d) escribir el estado del sistema en `shared_state["launch_state"]` para que recuperación lo lea.
+El trabajo visual es excelente — la UI es la más pulida de los 4 cuadrantes. **Pero el objetivo del módulo no se cumplió.** Su rol era **enviar la señal de despegue al ESP32** y **leer su estado real**. La interfaz entregada presenta elementos que no están respaldados por código funcional: la señal WiFi, el viento, la verificación de señal RF y la cuenta regresiva se generan con `random.randint(...)` en lugar de leerse del hardware. El botón "ACTIVAR DESPEGUE" debería abrir un socket o serial al ESP32 y mandar un comando `LAUNCH` — en lugar de eso, solo cuenta hacia atrás localmente. La consigna decía "no simular, controlar y monitorear el cohete real". Les recomendamos: (a) eliminar `_start_wifi_sim` y `_start_wind_sim`, (b) leer wifi/viento desde `shared_state` o desde un UDP listener, (c) que `_do_launch` envíe `{"cmd":"launch"}` por socket al ESP32, (d) escribir el estado del sistema en `shared_state["launch_state"]` para que recuperación lo lea.
 
 ---
 
@@ -114,7 +114,7 @@ Es el módulo más completo en funcionalidad: tracking de 6 fases de vuelo, grá
 
 ### Señales de uso de IA
 
-- Comentarios decorativos abundantes (`# ── MEJORAS ───`, `# ══════════════════════`).
+- Comentarios con marcos ASCII repetidos en cada sección (`# ── MEJORAS ───`, `# ══════════════════════`).
 - Bloques marcados explícitamente como `# ── LÓGICA ORIGINAL (sin cambios) ─────` (líneas 873, 919) — indica que el equipo o una IA pegó código encima del original.
 - Helper `_lighten` con un diccionario hardcodeado de 9 colores en lugar de un cálculo HSL real.
 - **Veredicto IA:** Probable apoyo de IA, pero con clara intervención y trabajo del equipo. Hay decisiones de diseño coherentes y una arquitectura sostenida a lo largo de 1455 líneas que sugiere comprensión.
@@ -138,7 +138,7 @@ Es el módulo más completo en funcionalidad: tracking de 6 fases de vuelo, grá
 
 ### Comentario para el equipo
 
-Excelente trabajo. Funcionalmente es el módulo más completo: persistencia JSON, exportación dual, confirmaciones, reset, cronómetro por fase, todo correcto. La UI/UX es de nivel profesional. **Lo que les baja la nota es la integración:** su listener UDP solo se activa cuando ejecutan `python modulo_despliegue.py` standalone, pero cuando `main.py` los importa, ese código nunca corre y su cuadrante queda ciego. La solución es **sacar el listener UDP del `__main__` block** y arrancarlo en `__init__` (igual que hizo el equipo 3 con `UdpReader`). Además, eliminen `TELEM_DEMO` y `_demo_tick` — la consigna era no simular. Si quieren agregar persistencia robusta, SQLite con una tabla `eventos` y otra `fases` mejoraría el criterio de DB.
+Excelente trabajo. Funcionalmente es el módulo más completo: persistencia JSON, exportación dual, confirmaciones, reset, cronómetro por fase, todo correcto. La UI/UX es de nivel profesional. **Lo que les baja la nota es la integración:** su listener UDP solo se activa cuando ejecutan `python modulo_despliegue.py` standalone; cuando `main.py` los importa, ese código no se ejecuta y el cuadrante no recibe datos de telemetría. La solución es **sacar el listener UDP del `__main__` block** y arrancarlo en `__init__` (igual que hizo el equipo 3 con `UdpReader`). Además, eliminen `TELEM_DEMO` y `_demo_tick` — la consigna era no simular. Si quieren agregar persistencia robusta, SQLite con una tabla `eventos` y otra `fases` mejoraría el criterio de DB.
 
 ---
 
@@ -169,7 +169,7 @@ Es el módulo con **mejor integración ESP32 de los cuatro**, único que cumple 
 
 1. **Imports duplicados líneas 22-25**: `import socket`, `import threading`, `import json`, `import time` repetidos después de la línea 17 — código mal limpiado.
 2. **Tres métodos haciendo lo mismo** (`leer_datos`, `obtener`, `read` — líneas 106-116): retornan exactamente `self._ultimo_dato`. Señal clara de que se probaron tres nombres distintos sin saber cuál era el esperado.
-3. **Comentario "¡Esta es la corrección nueva!" línea 66** — comentario delator de parche en producción.
+3. **Comentario "¡Esta es la corrección nueva!" línea 66** — comentario que evidencia un parche aplicado a posteriori sobre la lógica original, sin limpieza final del rastro de la edición.
 4. **Línea 989** `int((time.time() - (_reader._ultimo_paquete or time.time())) * 0)` — multiplicación por 0 hace que la variable siempre sea 0. Código muerto.
 5. **Acceso directo `d["gy"]` líneas 818-832** sin `.get()` — si llega un paquete con campos faltantes, KeyError. Frágil. Se salva parcialmente porque el UdpReader expone `datos = {}` si nada llegó, lo que también daría KeyError, pero solo se ejecuta si `_reader.conectado` es True y los paquetes están llegando.
 6. **`tk.messagebox.askyesno` línea 322** — funciona en Python 3 por efecto colateral del `from tkinter import messagebox` línea 14, pero es estilo incorrecto. Debió ser `messagebox.askyesno(...)`.
@@ -240,7 +240,7 @@ El módulo presenta un radar circular animado, mapa táctico con grilla, panel d
 
 - Estilo mixto: en algunos lugares usa `tk.X` / `tk.BOTH` / `tk.LEFT`, en otros simplemente "x" / "both" / "left" como strings. Inconsistencia típica de copy-paste.
 - Helpers como `_blend(hx, b)` y `_hex_blend` (que existe también en aterrizaje, casi idéntico) sugieren código compartido entre equipos o sugerido por una IA común.
-- Headers decorativos más sencillos que despegue.
+- Headers con marcos ASCII más sencillos que los de despegue.
 - **Veredicto IA:** Apoyo de IA presente pero claramente menor que en despegue. El trabajo de Haversine, bearing y `shared_state.py` demuestran entendimiento real del dominio y decisiones arquitectónicas propias.
 
 ## Calificación por criterio
@@ -306,9 +306,9 @@ Su módulo tiene los cálculos más sofisticados de todo el proyecto: la fórmul
 
 ### Uso de IA detectado
 
-- **Despegue:** ALTA probabilidad de generación AI con poca adaptación. Comentarios decorativos, simulaciones random, código de presentación sin lógica real.
+- **Despegue:** ALTA probabilidad de generación AI con poca adaptación. Comentarios con marcos ASCII repetidos, simulaciones basadas en `random`, elementos visuales sin lógica funcional asociada.
 - **Despliegue:** MEDIA. Mucho código real pero con marcadores de re-edición ("LÓGICA ORIGINAL (sin cambios)").
-- **Aterrizaje:** BAJA-MEDIA. Tiene aliases delatores (3 métodos hacen lo mismo) e imports duplicados, pero la lógica del UdpReader y SQLite muestra comprensión.
+- **Aterrizaje:** BAJA-MEDIA. Tiene tres aliases con implementación idéntica (`leer_datos`/`obtener`/`read`) e imports duplicados, pero la lógica del UdpReader y SQLite muestra comprensión.
 - **Recuperación:** BAJA-MEDIA. Helpers comparten estilo con aterrizaje (posible IA común), pero el aporte de `shared_state.py` y los cálculos de Haversine/bearing requieren entendimiento real del problema.
 
 > ⚠️ La detección de IA en código estudiantil es **probabilística**, no determinista. Los indicadores listados son patrones estadísticamente asociados con generación asistida, pero NO prueban que el código haya sido generado por IA sin intervención del equipo. Se incluyen como contexto para la cátedra, no como acusación.
@@ -380,7 +380,7 @@ El proyecto **no fue diseñado en conjunto**. Cada equipo trabajó aislado y el 
 | Lectura y análisis técnico | IA + docente | La IA leyó las ~4220 líneas de código de los 4 módulos + `shared_state.py` + `main.py`, identificó patrones, listó bugs y señales de IA. El docente verificó hallazgos puntuales. |
 | Definición de criterios | **Docente** | Los 10 criterios (Repo, Libs, UI, Ctrl, Diál, Evt, JSON, Rep, DB, ESP32) y la regla maestra "no simular con random" son del docente. |
 | Ponderación inicial | IA (propuesta) → Docente (decisión final) | La IA propuso una primera asignación de puntos. El docente revisó, ajustó y aprobó. **Tres correcciones puntuales aplicadas por el docente durante la revisión:** (1) Recuperación pasó de 79 a 82 — el docente reevaluó las penalizaciones del comentario hardcodeado (era evidencia de iteración, no de código sin probar) y del `shared_state.py` (es un aporte arquitectónico positivo, no una falla); (2) Aterrizaje pasó de 88 a 91 — el docente detectó penalización doble en Libs (los imports duplicados de `json`/`time` eran cosméticos) y una crítica errónea en Diálogos ("estilo inconsistente" cuando solo había un uso); (3) Despegue pasó de 60 a 62 — el docente eliminó la doble penalización por uso de `random` (ya estaba castigado fuerte en ESP32, no corresponde castigarlo también en Libs). |
-| Detección de IA en código estudiantil | IA (heurísticas) | La IA identificó patrones estadísticamente asociados con generación asistida (docstrings decorativos uniformes, métodos duplicados, comentarios "esta es la corrección nueva", paletas de colores hardcodeadas, etc.). **Estos indicadores son probabilísticos, no concluyentes.** No se penaliza a ningún equipo por "haber usado IA" — la nota se basa en si el código cumple la consigna. |
+| Detección de IA en código estudiantil | IA (heurísticas) | La IA identificó patrones estadísticamente asociados con generación asistida (docstrings con marcos ASCII uniformes, métodos duplicados, comentarios "esta es la corrección nueva", paletas de colores hardcodeadas, etc.). **Estos indicadores son probabilísticos, no concluyentes.** No se penaliza a ningún equipo por "haber usado IA" — la nota se basa en si el código cumple la consigna. |
 | Validación funcional | IA + docente | Se ejecutó `python main.py` + simulador para verificar que la app levanta sin errores. La IA construyó un simulador UDP (`simulador_esp32.py`) para emular el ESP32. |
 | Redacción del informe | IA (borrador) → Docente (revisión y firma) | La IA produjo este documento; el docente lo revisó, ajustó tono, corrigió interpretaciones, y aprueba la versión final como propia. |
 

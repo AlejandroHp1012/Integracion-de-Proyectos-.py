@@ -192,7 +192,7 @@ class TelemetriaReader:
 
 ### Despliegue — sacar el listener UDP del bloque `if __name__ == "__main__"`
 
-Su listener actual (línea ~1380) funciona, pero está dentro de `__main__` así que **solo corre cuando ejecutan `python modulo_despliegue.py` solo**. Cuando `main.py` los importa, ese bloque no se ejecuta y su cuadrante queda ciego.
+Su listener actual (línea ~1380) funciona, pero está dentro de `__main__` así que **solo corre cuando ejecutan `python modulo_despliegue.py` solo**. Cuando `main.py` los importa, ese bloque no se ejecuta y su cuadrante no recibe datos de telemetría.
 
 **Solución:** Mover el listener a un método de la clase `ModuloDespliegue` y arrancarlo desde `__init__`:
 
