@@ -33,9 +33,12 @@ python -c "import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendt
 |---|---:|---|---|
 | ⬇️ Telemetría | UDP **8080** | `modulo_aterrizaje` | Sensores (MPU-6050, BMP180, DS18B20) |
 | ⬇️ Telemetría | UDP **8081** | `modulo_recuperacion` | GPS y telemetría de vuelo |
+| ⬇️ Telemetría | UDP **9091** | `modulo_despegue` | RSSI / estado de subsistemas |
 | ⬆️ Comandos | UDP **9090** | el **simulador** | Cualquier módulo manda: launch, abort, reset, status |
 
-> **Nota importante para Equipo 4 (Recuperación):** En la versión original ustedes escuchaban en 8080 igual que aterrizaje. El docente cambió su listener a 8081 antes de la evaluación (cambio menor de 2 líneas). Asegúrense de mantener 8081 en su código.
+> **Nota Equipo 4 (Recuperación):** En la versión original escuchaban en 8080 igual que aterrizaje. El docente cambió el listener a 8081 antes de la evaluación (cambio menor de 2 líneas). Mantener 8081 en el código.
+>
+> **Nota Equipo 1 (Despegue) — re-entrega 2026-05-19:** El módulo escucha en 9091. El docente extendió el simulador para emitir también a 9091 (cambio menor de 4 líneas, paquete idéntico al de aterrizaje/recuperación). El equipo no necesita modificar nada.
 
 ---
 

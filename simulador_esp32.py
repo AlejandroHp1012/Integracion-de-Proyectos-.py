@@ -439,6 +439,8 @@ def main():
                    help="Puerto UDP de modulo_aterrizaje (default 8080)")
     p.add_argument("--puerto-recuperacion", type=int, default=8081,
                    help="Puerto UDP de modulo_recuperacion (default 8081)")
+    p.add_argument("--puerto-despegue", type=int, default=9091,
+                   help="Puerto UDP de modulo_despegue (default 9091)")
     p.add_argument("--cmd-port", type=int, default=9090,
                    help="Puerto UDP donde escuchar comandos (default 9090)")
     p.add_argument("--cmd-bind", default="0.0.0.0",
@@ -484,6 +486,7 @@ def main():
     print("== Simulador ESP32-S3 (v2) ==")
     print(f"   telemetria -> {args.host}:{args.puerto_aterrizaje} (aterrizaje)")
     print(f"                 {args.host}:{args.puerto_recuperacion} (recuperacion)")
+    print(f"                 {args.host}:{args.puerto_despegue} (despegue)")
     print(f"   comandos   <- {args.cmd_bind}:{args.cmd_port}")
     print(f"   modo:       {args.modo}")
     print(f"   frecuencia: {args.hz} Hz")
@@ -521,6 +524,7 @@ def main():
                 data = json.dumps(payload).encode("utf-8")
                 sock.sendto(data, (args.host, args.puerto_aterrizaje))
                 sock.sendto(data, (args.host, args.puerto_recuperacion))
+                sock.sendto(data, (args.host, args.puerto_despegue))
                 fase = payload["fase"]
                 altitud = payload["altitud"]
                 vel = payload["vel_vert"]

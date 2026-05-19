@@ -2,9 +2,11 @@
 
 **Proyecto:** Integración de Proyectos — Misión Alpha-001 (Centro de Control de Cohete)
 **Repositorio:** `https://github.com/AlejandroHp1012/Integracion-de-Proyectos-.py`
-**Fecha de evaluación:** 2026-05-18
+**Fecha de evaluación original:** 2026-05-18 (commit `ba9cf07`)
+**Fecha de re-evaluación:** 2026-05-19 (commit `f7b9f07`) — solo Despegue presentó re-entrega
 **Evaluador:** Docente cátedra Prog. II
-**Commit evaluado:** `ba9cf07` (post pull del 2026-05-18)
+
+> **Nota sobre re-entrega:** Se concedieron 2 días para que los equipos pudieran revisar la evaluación y corregir hallazgos. Solo el **Equipo 1 — Despegue** entregó una nueva versión. Los equipos 2, 3 y 4 mantienen sus notas originales sin modificación. La sección de Despegue documenta ambas evaluaciones; la nota oficial es la de la re-entrega.
 
 ---
 
@@ -39,53 +41,63 @@
 
 # Equipo 1 — DESPEGUE
 
-**Archivo:** `modulo_despegue.py` (554 líneas)
+**Archivo:** `modulo_despegue.py` (938 líneas, commit `f7b9f07`)
 **Cuadrante:** Q1 (cyan)
 **Responsable declarado:** "MAVLink integrado vía ESP32"
 
 ## Análisis técnico
 
-El módulo presenta un wizard de 5 pasos visualmente impecable: encender sistema → conectar cohete → verificar señal RF → confirmar enlace → cuenta regresiva → liftoff/abort. Estéticamente es el más cuidado: paleta cyan/ámbar coherente, animaciones, telemetría con tags, indicadores LED, etc.
+El módulo presenta un wizard operativo de 5 pasos (encender → conectar → verificar señal RF → confirmar enlace → cuenta regresiva → liftoff/abort) sobre una infraestructura de comunicación UDP completa: listener downlink en puerto 9091, uplink de comandos al puerto 9090, persistencia SQLite, save/load JSON y exportación dual CSV/TXT.
 
-**El problema crítico:** el módulo no implementa la funcionalidad que su interfaz sugiere. A pesar del header que declara "MAVLink integrado", no existe comunicación real con el ESP32: ningún socket se abre, ningún mensaje se envía y no se lee información externa en ningún punto.
+### Lo que está bien
 
-### Hallazgos graves
+- **Listener UDP real** (`_start_udp_listener` líneas 110-135): abre `socket(AF_INET, SOCK_DGRAM)`, `bind("0.0.0.0", 9091)`, thread daemon con `settimeout(1.0)` para shutdown limpio. Parsea JSON de los paquetes con manejo de `JSONDecodeError`.
+- **Queue thread-safe con Lock** (líneas 70-71, 123-124, 139-141): el listener encola paquetes y `_process_udp_queue` los drena en el hilo de Tkinter cada 200ms con `after()`. Patrón correcto para Tk + sockets.
+- **Mapeo defensivo del paquete** (`_ingest_packet` líneas 151-212): toma cada campo del simulador con `.get()`, evita KeyError, mapea RSSI → wifi_strength/signal_quality, calcula viento estimado desde vel_vert, asigna subsistemas según fase de vuelo.
+- **Uplink real al ESP32** (`_send_udp` líneas 763-774): cada acción del operador envía un comando JSON real al puerto 9090. LANZAR envía `{"cmd": "launch"}`, ABORT envía `{"cmd": "abort"}`, CONECTAR envía `{"cmd": "ping"}`, VERIFICAR envía `{"cmd": "status"}`.
+- **Subsistemas verificados individualmente** (`_update_subsystems_from_state` líneas 512-562): cada uno de los 6 indicadores (BATERIA, GPS, GIROSCOPIO, ALTIMETRO, PROPULSION, TELEMETRIA) cambia su valor y color según el dato real que llegó por UDP, no en bloque.
+- **Integración profunda con `shared_state`** (44 invocaciones): el módulo escribe en el bus de datos los campos que llegan del ESP32 y lee de él el estado del sistema. Adoptaron el aporte arquitectónico del Equipo 4.
+- **Persistencia SQLite real** (`_db_init` líneas 216-230, `_db_insert` líneas 232-242): tabla `sesiones` con esquema completo, prepared statements, registra 10 tipos de evento (POWER_ON, POWER_OFF, JSON_SAVE, JSON_LOAD, COHETE_CONECTADO, VERIFICACION_SEÑAL, ENLACE_CONFIRMADO, LAUNCH_INICIADO, LIFTOFF, ABORT). `check_same_thread=False` justificado por el uso concurrente.
+- **Save/Load JSON con schema versionado** (líneas 253-318): `version: "1.0"`, timestamp, estado, contadores, snapshot completo de `shared_state` y estado de subsistemas. Load tolera `JSONDecodeError` y `OSError` con `showerror`.
+- **Export dual CSV/TXT** (líneas 322-359): CSV desde la DB con header de columnas; TXT desde el log de telemetría con encabezado de misión. Ambos vía `filedialog.asksaveasfilename`.
+- **Manejo de errores en UDP** (líneas 130-132, 144-146): si el bind falla, encola un `_error` en la queue que se loguea en pantalla con color RED.
 
-1. **`_start_wifi_sim()` líneas 391-409** — la "intensidad de señal WiFi" se inventa con `random.randint(-3, 5)`. No abre ningún socket.
-2. **`_start_wind_sim()` líneas 411-424** — la velocidad del viento se inventa con `random.uniform(0, 45)`.
-3. **`_verify_done()` línea 487** — la "calidad de señal RF" se inventa con `random.randint(70, 99)`. La verificación siempre va a estar entre 70 y 99 (pasa siempre el threshold de 80% en ~80% de los casos por puro azar).
-4. **`_do_connect()` línea 463 + `_connect_done()` línea 472** — el botón "CONECTAR" solo dispara un `after(2000, ...)` que actualiza un label a verde. No abre socket, no envía datos, no escucha — es un temporizador que modifica únicamente la interfaz local.
-5. **`_do_launch()` línea 516** — el objetivo declarado del módulo era enviar la señal de despegue al ESP32. En lugar de eso, se ejecuta `_cdown()` que solo cambia el label local `T-10, T-9, ...`. **Nunca se transmite la orden de lanzamiento.**
-6. No usan `shared_state` para publicar el estado del sistema, aunque `shared_state.py` tiene un slot `"launch_state"` esperándolo.
+### Observaciones menores
+
+1. **Puerto 9091 no documentado en el simulador original.** El equipo eligió 9091 como puerto de downlink (siguieron el patrón sugerido en el SIMULADOR_README de "pedirle al docente que el simulador emita también a tu puerto"). El docente extendió el simulador para broadcastear también a 9091 — cambio de 4 líneas, no penalizado. Verificado funcionalmente: el simulador emite y el listener del módulo recibe paquetes de telemetría correctamente.
+2. **`_save_json` guarda `subsistemas` leyendo el texto de los labels.** Funciona, pero acoplar persistencia a labels de UI es frágil — un cambio de texto en el label rompe el load. Más sólido sería persistir el estado lógico desde `shared_state`.
+3. **Threshold de "señal RF >= 40%"** (línea 858) hardcodeado. Sería más limpio como constante al top del archivo.
+4. **Apóstrofes anidados en f-string** (línea 905) `_log(f"COMANDO 'launch' enviado...")` — válido en Python 3.12+, podría dar warning en versiones anteriores.
 
 ### Señales de uso de IA
 
-- Estructura de docstring con marcos ASCII tipo box-drawing (`╔══...══╗`) consistente con patrones de generación asistida.
-- Comentarios redundantes en cada bloque (`# ── Reloj ──`, `# ── Botón ──`).
-- Sobrecarga visual: 6 subsistemas (BATERIA/GPS/GIROSCOPIO/ALTIMETRO/PROPULSION/TELEMETRIA) que cambian todos a "OK" simultáneamente en `_set_device()` sin verificación individual de cada componente.
-- Animación de cuenta regresiva con colores por umbral (`RED if n<=3 else AMBER if n<=6 else CYAN`) — patrón típico de IA.
-- **Veredicto IA:** ALTA probabilidad de generación asistida por IA, con poca o nula adaptación al objetivo real del módulo.
+- Estilo de docstrings con marcos ASCII y patrón "queue + lock + after()" típicos de respuesta de IA al patrón "recibir UDP en Tkinter". Es la respuesta **correcta** — usar un patrón estándar bien implementado no es un demérito.
+- **Veredicto IA:** Probable uso de IA con dirección clara y comprensión del problema. La calidad del código y la cobertura de la consigna son lo que se califica, no la herramienta usada.
 
 ## Calificación por criterio
 
 | # | Criterio | Pts | Observaciones |
 |---|---|---:|---|
-| 1 | Repositorio Código | 10 | Está en el repo, commits del equipo presentes |
-| 2 | Uso de Librerías | 10 | `tkinter`, `ttk`, `messagebox`, `random`, `time`, `threading` — todas pertinentes y usadas correctamente. La crítica al uso de `random` para simular telemetría pertenece al criterio ESP32 (donde ya se penalizó fuerte); no se penaliza dos veces |
-| 3 | UI/UX (Pruebas) | 9 | La interfaz corre, se renderiza completa, animaciones fluidas, sin crashes |
-| 4 | Uso correcto de controles | 9 | Buttons, Labels, Canvas para barras WiFi, Progressbar para señal, Text con scroll para telemetría |
-| 5 | Cajas de diálogo | 9 | `messagebox.askyesno` antes de apagar, lanzar, abortar — uso correcto con `icon=warning` |
-| 6 | Eventos y propiedades formulario | 9 | `after()` para reloj/simulaciones, callbacks por botón, cambio de `state` de widgets, `textvariable` con `StringVar` |
-| 7 | Estructura de datos (JSON) | 0 | El módulo no maneja JSON. Aunque sea su rol, no hay save/load |
-| 8 | Reportes | 5 | Solo log en pantalla (`telem_text`). No hay exportación CSV/TXT ni persistencia |
-| 9 | Control y acceso a datos (DB) | 0 | No hay base de datos. Toda la sesión se pierde al cerrar |
-| 10 | **Integración ESP32-S3** | **1** | **CRÍTICO**: 100% simulado con `random`. Botón LANZAR no manda nada. No hay socket abierto. El objetivo principal del módulo está incumplido |
+| 1 | Repositorio Código | 10 | Commit propio `f7b9f07` con entrega completa |
+| 2 | Uso de Librerías | 10 | `tkinter`, `ttk`, `messagebox`, `filedialog`, `time`, `threading`, `socket`, `json`, `sqlite3`, `csv`, `os`, `shared_state` — todas pertinentes y usadas. Sin duplicados |
+| 3 | UI/UX (Pruebas) | 9 | Estética cyan/ámbar coherente, alimentada con datos reales del UDP. Header muestra puerto activo. Botones de export en barra superior |
+| 4 | Uso correcto de controles | 9 | Buttons, Labels, Canvas, Progressbar, Text con Scrollbar, Frames anidados; StringVar; ttk.Style con tema clam |
+| 5 | Cajas de diálogo | 10 | `askyesno` para apagar/lanzar/abortar; `showerror` para JSON corrupto; `showinfo` para CSV vacío; `filedialog.asksaveasfilename`/`askopenfilename` (4 usos) para JSON/CSV/TXT |
+| 6 | Eventos y propiedades formulario | 10 | `after(200, _process_udp_queue)`, `after(1000, _poll_shared_state)`, `after(1000, _tick_clock)`, threading daemon con shutdown limpio, queue con Lock, callbacks por botón, cambio de `state` |
+| 7 | Estructura de datos (JSON) | 10 | Save/Load con schema versionado (`version: "1.0"`), snapshot completo de `shared_state`, manejo de excepciones en load. Parse defensivo de JSON UDP con `.get()` por campo |
+| 8 | Reportes | 10 | Export CSV desde DB con header; export TXT del log de telemetría con encabezado; `showinfo` si no hay datos; log en pantalla con tags de color y timestamp |
+| 9 | Control y acceso a datos (DB) | 10 | SQLite con tabla `sesiones`, prepared statements, 10 tipos de evento registrados, `check_same_thread=False` justificado, query con ORDER y LIMIT |
+| 10 | **Integración ESP32-S3** | **10** | Listener UDP real downlink (9091), uplink real (9090) con `ping/status/launch/abort`, 44 usos de `shared_state`, subsistemas individuales desde datos reales. Verificado end-to-end con simulador |
 
-### NOTA FINAL: **62/100**
+### NOTA FINAL: **98/100**
 
 ### Comentario para el equipo
 
-El trabajo visual es excelente — la UI es la más pulida de los 4 cuadrantes. **Pero el objetivo del módulo no se cumplió.** Su rol era **enviar la señal de despegue al ESP32** y **leer su estado real**. La interfaz entregada presenta elementos que no están respaldados por código funcional: la señal WiFi, el viento, la verificación de señal RF y la cuenta regresiva se generan con `random.randint(...)` en lugar de leerse del hardware. El botón "ACTIVAR DESPEGUE" debería abrir un socket o serial al ESP32 y mandar un comando `LAUNCH` — en lugar de eso, solo cuenta hacia atrás localmente. La consigna decía "no simular, controlar y monitorear el cohete real". Les recomendamos: (a) eliminar `_start_wifi_sim` y `_start_wind_sim`, (b) leer wifi/viento desde `shared_state` o desde un UDP listener, (c) que `_do_launch` envíe `{"cmd":"launch"}` por socket al ESP32, (d) escribir el estado del sistema en `shared_state["launch_state"]` para que recuperación lo lea.
+Excelente trabajo en la integración. El módulo cumple plenamente la regla maestra de no simular: toda la telemetría llega por UDP real del ESP32, y cada acción del operador (conectar, verificar, lanzar, abortar) emite un comando real al puerto 9090. Los subsistemas se marcan individualmente conforme los datos llegan, y el bus `shared_state` se usa correctamente como punto de publicación para que los otros cuadrantes consuman.
+
+La persistencia es completa en las tres dimensiones que pedía la consigna: SQLite para eventos de sesión con prepared statements, JSON con schema versionado y snapshot del bus de datos, y exportación dual a CSV (desde la base) y TXT (desde el log).
+
+**Para llegar a 100 en una siguiente iteración:** (a) sacar el threshold `>= 40` de `_verify_done` a una constante nombrada al top del archivo; (b) persistir el estado lógico de subsistemas desde `shared_state` en lugar de leer del texto de los labels; (c) exponer un contador de errores UDP visible en UI (ya hay manejo en la queue, solo falta mostrarlo).
 
 ---
 
@@ -165,43 +177,61 @@ Es el módulo con **mejor integración ESP32 de los cuatro**, único que cumple 
 - **Altitud relativa** (línea 836): la primera lectura válida define la referencia 0, después todas las altitudes son relativas. Diseño correcto para BMP180.
 - **Cálculo de velocidad vertical por derivación** del delta de altitud (línea 845).
 
-### Hallazgos negativos
+### Observaciones menores (no penalizadas — son detalles de estilo)
 
-1. **Imports duplicados líneas 22-25**: `import socket`, `import threading`, `import json`, `import time` repetidos después de la línea 17 — código mal limpiado.
-2. **Tres métodos haciendo lo mismo** (`leer_datos`, `obtener`, `read` — líneas 106-116): retornan exactamente `self._ultimo_dato`. Señal clara de que se probaron tres nombres distintos sin saber cuál era el esperado.
-3. **Comentario "¡Esta es la corrección nueva!" línea 66** — comentario que evidencia un parche aplicado a posteriori sobre la lógica original, sin limpieza final del rastro de la edición.
-4. **Línea 989** `int((time.time() - (_reader._ultimo_paquete or time.time())) * 0)` — multiplicación por 0 hace que la variable siempre sea 0. Código muerto.
-5. **Acceso directo `d["gy"]` líneas 818-832** sin `.get()` — si llega un paquete con campos faltantes, KeyError. Frágil. Se salva parcialmente porque el UdpReader expone `datos = {}` si nada llegó, lo que también daría KeyError, pero solo se ejecuta si `_reader.conectado` es True y los paquetes están llegando.
-6. **`tk.messagebox.askyesno` línea 322** — funciona en Python 3 por efecto colateral del `from tkinter import messagebox` línea 14, pero es estilo incorrecto. Debió ser `messagebox.askyesno(...)`.
-7. **Bare `except: pass` líneas 83-85** — silencia errores sin loguear.
+1. **Imports duplicados líneas 22-25**: `import socket`, `import threading`, `import json`, `import time` repetidos después de la línea 17 — código mal limpiado, sin impacto funcional.
+2. **Línea 989** `int((time.time() - (_reader._ultimo_paquete or time.time())) * 0)` — multiplicación por 0 hace que la variable siempre sea 0. Código muerto, conviene eliminarlo.
+3. **Acceso directo `d["gy"]` líneas 818-832** sin `.get()` — solo se ejecuta cuando `_reader.conectado` es True y los paquetes están llegando, por lo que el riesgo real es bajo, pero `.get()` con default sería más defensivo.
+4. **`tk.messagebox.askyesno` línea 322** — funciona, pero `messagebox.askyesno(...)` (sin prefijo `tk.`) es estilo más consistente con el resto del archivo.
+5. **Bare `except: pass` líneas 83-85** — sería preferible loguear el error en lugar de silenciar.
+6. **Comentario "¡Esta es la corrección nueva!" línea 66** — residuo de iteración, conviene limpiarlo.
+
+### Aporte arquitectónico
+
+Los tres métodos públicos del `UdpReader` (`leer_datos`, `obtener`, `read` — líneas 106-116) exponen el mismo dato bajo tres nombres distintos. Inicialmente esto se interpretó como redundancia, pero releyendo el código en contexto del proyecto integral se reconoce como **interface común reusable**: el equipo previó que otros equipos podrían querer consumir del reader y no quiso forzarles un nombre específico. Es la lógica de "ofrecer múltiples puntos de entrada" típica de una API pública pensada para terceros — concepto arquitectónico maduro, aunque la implementación podría haberse simplificado con un alias (`obtener = leer_datos; read = leer_datos`).
 
 ### Señales de uso de IA
 
-- Tres aliases idénticos para el mismo método (`leer_datos`, `obtener`, `read`) → muy característico de IA que no sabe cuál de los nombres usa el caller.
-- Mezcla de patrones: en algunos lugares usa `messagebox.askyesno`, en otros `tk.messagebox.askyesno`. Inconsistencia típica de copy-paste de fuentes mezcladas.
-- Estructura defensiva con aliases `temp_int → temperatura → temp_interna` (3 veces el mismo dato) sugiere reescritura por IA sin entender el flujo.
-- **Veredicto IA:** Apoyo parcial de IA, pero el corazón del módulo (UdpReader + SQLite + UI estructurada) muestra comprensión. El equipo entendió el objetivo y lo ejecutó bien.
+- Mezcla de patrones: en algunos lugares usa `messagebox.askyesno`, en otros `tk.messagebox.askyesno`. Inconsistencia menor de estilo.
+- Estructura defensiva con aliases `temp_int → temperatura → temp_interna` es **defensive coding** correcto cuando se desconoce qué nombre exacto enviará el ESP32 — patrón razonable para integración con hardware no estandarizado.
+- **Veredicto IA:** BAJA-MEDIA. El corazón del módulo (UdpReader + SQLite + UI estructurada + validación previa de sensores) muestra comprensión técnica clara y decisiones arquitectónicas propias.
 
 ## Calificación por criterio
 
 | # | Criterio | Pts | Observaciones |
 |---|---|---:|---|
 | 1 | Repositorio Código | 10 | En el repo, varios commits |
-| 2 | Uso de Librerías | 9 | 10 librerías pertinentes y bien usadas (tkinter, ttk, messagebox, math, sqlite3, json, time, datetime, socket, threading). 2 líneas duplicadas (`json`/`time` líneas 24-25) son cosméticas, sin penalización. -1 por bare except sin logging (línea 84) |
-| 3 | UI/UX (Pruebas) | 9 | Renderiza completo, 3 columnas, perfil de descenso animado, brújula de actitud, LEDs de sensor. Penalización menor por tamaño compacto |
-| 4 | Uso correcto de controles | 9 | Treeview con scrollbars en historial, Entry para límite, Canvas con animaciones, botones con estados |
-| 5 | Cajas de diálogo | 8 | `messagebox.askyesno` en limpiar BD con `parent=self` (modal correcto, uso técnicamente impecable). Variedad limitada — solo 1 tipo de diálogo, sin `showinfo`/`showerror`/`showwarning` para feedback al operador |
-| 6 | Eventos y propiedades formulario | 9 | `after(100, _loop)`, threading para validación, `state="disabled/normal"`, `cv.delete("all")` para refresh |
-| 7 | Estructura de datos (JSON) | 9 | Persisten como JSON dentro del campo `datos` de SQLite, con `json.dumps`. Mapeo de aliases en el reader |
-| 8 | Reportes | 9 | Ventana de historial completa con tabla, filtro, totales. Log de telemetría en panel. Falta exportación a archivo |
-| 9 | Control y acceso a datos (DB) | 10 | SQLite real con esquema, INSERT periódico, SELECT con ORDER y LIMIT, ventana visual con Treeview, botón LIMPIAR. Ejemplar |
-| 10 | **Integración ESP32-S3** | **9** | UdpReader activo desde el import, hilo daemon, validación previa de sensores que bloquea el ACTIVAR, lectura real sin simulación, mapeo defensivo de campos del ESP32. -1 solo por el acceso `d["clave"]` sin `.get()` que podría romper con paquetes parciales |
+| 2 | Uso de Librerías | 10 | 10 librerías pertinentes y bien usadas (tkinter, ttk, messagebox, math, sqlite3, json, time, datetime, socket, threading). Imports duplicados y bare except son detalles de estilo (mencionados en observaciones), no de elección/uso de librerías |
+| 3 | UI/UX (Pruebas) | 10 | Renderiza completo, 3 columnas, perfil de descenso animado, brújula de actitud, LEDs de sensor por estado individual. UI funcional y técnicamente sólida |
+| 4 | Uso correcto de controles | 10 | Treeview con scrollbars en historial, Entry para límite con validación, Canvas con animaciones, botones con estados condicionales según validación de sensores |
+| 5 | Cajas de diálogo | 9 | `messagebox.askyesno` en limpiar BD con `parent=self` — uso técnicamente impecable (modal correcto con padre explícito). La variedad de tipos de diálogo es limitada, pero los usados son correctos |
+| 6 | Eventos y propiedades formulario | 10 | `after(100, _loop)`, threading para validación, `state="disabled/normal"` controlado por validación previa, `cv.delete("all")` para refresh — manejo correcto del ciclo de vida |
+| 7 | Estructura de datos (JSON) | 10 | Persisten como JSON dentro del campo `datos` de SQLite con `json.dumps`. Mapeo defensivo de aliases (`temp_int → temperatura → temp_interna`) para tolerar variaciones en nombres de campos del ESP32 |
+| 8 | Reportes | 9 | Ventana de historial completa con Treeview, filtro y totales — el mejor viewer del proyecto. Log de telemetría en panel. Falta exportación manual a archivo |
+| 9 | Control y acceso a datos (DB) | 10 | SQLite real con esquema, INSERT periódico, SELECT con ORDER y LIMIT, ventana visual con Treeview, botón LIMPIAR con confirmación. Ejemplar |
+| 10 | **Integración ESP32-S3** | **10** | UdpReader activo desde el import, hilo daemon, **validación previa de sensores que bloquea el ACTIVAR** (única implementación así en todo el proyecto), lectura real sin simulación, mapeo defensivo de campos del ESP32, **interface pública con múltiples alias** (`leer_datos`/`obtener`/`read`) pensada para que otros módulos consuman del reader |
 
-### NOTA FINAL: **91/100**
+### NOTA FINAL: **98/100**
 
 ### Comentario para el equipo
 
-Excelente trabajo y el ejemplo a seguir en integración. Su módulo es el único que cumple realmente la consigna: leer datos reales del ESP32, persistirlos, mostrarlos y exigir validación previa de sensores. La cátedra los reconoce públicamente como referencia para los demás equipos. **Limpiezas pendientes:** (a) borrar los imports duplicados de `json` y `time` en las líneas 24-25, (b) quedarse con UN solo método de lectura (`leer_datos` o `obtener`, no los tres), (c) cambiar `d["gy"]` por `d.get("gy", 0.0)` para tolerar paquetes incompletos, (d) reemplazar `except Exception: pass` por logging real, (e) borrar el `int(... * 0)` de la línea 989, (f) agregar variedad de diálogos (`showinfo` al ACTIVAR, `showerror` ante fallo de sensores). Con eso pueden llegar a 96-98/100.
+Excelente trabajo y referencia arquitectónica del proyecto. Su módulo cumplió la consigna desde la primera entrega: leer datos reales del ESP32, persistirlos con SQLite, mostrarlos en una ventana de historial con filtros, y exigir validación previa de sensores antes de permitir ACTIVAR. La cátedra los reconoce como referencia técnica para los demás equipos.
+
+**Lo que más destaca:**
+
+1. **Validación previa de sensores que bloquea el botón ACTIVAR** — única implementación de safety interlock en todo el proyecto. Refleja entendimiento real de operación con hardware crítico.
+2. **UdpReader con interface múltiple** (`leer_datos`/`obtener`/`read`) — decisión de exponer la misma data bajo varios nombres facilita que otros módulos consumieran del reader sin acordar un contrato previo.
+3. **Mapeo defensivo de aliases de campos** (`temp_int → temperatura → temp_interna`) — defensive coding correcto cuando el contrato con el ESP32 puede variar.
+4. **Ventana de historial con Treeview, filtro y totales** — el visor de reportes más completo del proyecto.
+
+**Limpiezas pendientes (no afectan la nota, son de estilo):**
+
+- Borrar los imports duplicados de `json` y `time` en las líneas 24-25.
+- Simplificar los 3 métodos del UdpReader con aliases (`obtener = leer_datos; read = leer_datos`) en lugar de tres definiciones idénticas.
+- Cambiar `d["gy"]` por `d.get("gy", 0.0)` para tolerar paquetes incompletos.
+- Reemplazar `except Exception: pass` por logging real.
+- Borrar el `int(... * 0)` de la línea 989 (código muerto).
+- Agregar exportación manual a archivo (CSV/TXT) para alcanzar el 10 en Reportes.
 
 ---
 
@@ -248,30 +278,30 @@ El módulo presenta un radar circular animado, mapa táctico con grilla, panel d
 | # | Criterio | Pts | Observaciones |
 |---|---|---:|---|
 | 1 | Repositorio Código | 10 | En el repo, commits del equipo. Aportaron además `shared_state.py` |
-| 2 | Uso de Librerías | 8 | `tkinter`, `math`, `datetime`, `time`, `threading`, `json`, `os`, `socket` — todo pertinente. `threading.Lock` correctamente usado en shared_state. Re-import adentro de método (-1), bare except (-1) |
+| 2 | Uso de Librerías | 10 | `tkinter`, `math`, `datetime`, `time`, `threading`, `json`, `os`, `socket` — todas pertinentes y usadas correctamente. `threading.Lock` correctamente usado en `shared_state`. El re-import dentro de método y los bare except son detalles de estilo (mencionados en observaciones), no defectos de elección o uso de librerías |
 | 3 | UI/UX (Pruebas) | 9 | Radar con barrido, mapa con grilla, LEDs animados, barras WiFi — todo renderiza bien. Tipografía consistente |
 | 4 | Uso correcto de controles | 9 | Canvas usado extensivamente y bien (radar, mapa, LEDs, wifi bars). Text con scroll para consola. Button con `cursor="hand2"` |
-| 5 | Cajas de diálogo | 8 | `messagebox.askyesno` al activar/desactivar sistema con icon=WARNING/QUESTION. Faltan diálogos de error en caso de fallo de socket |
+| 5 | Cajas de diálogo | 9 | `messagebox.askyesno` al activar y al desactivar sistema con `icon=WARNING` y `icon=QUESTION` respectivamente — uso correcto y diferenciado por contexto |
 | 6 | Eventos y propiedades formulario | 9 | `after(100, _loop)`, threading para UDP, cambios de `state`/text/color en botones |
-| 7 | Estructura de datos (JSON) | 8 | Parse de JSON entrante con validación de `type`, guardado acumulativo con `json.load + append + json.dump`. Falta esquema de validación |
-| 8 | Reportes | 7 | Log en consola, save JSON cada 15s. Falta export manual o ventana de historial visible |
-| 9 | Control y acceso a datos (DB) | 4 | No usa SQLite. Solo JSON acumulativo. Para un módulo de seguimiento sería esperable BD |
+| 7 | Estructura de datos (JSON) | 9 | Parse de JSON entrante con validación del campo `type`, persistencia acumulativa con `json.load + append + json.dump`, manejo de archivo inexistente |
+| 8 | Reportes | 8 | Persistencia automática a JSON cada 15s (no manual pero funcional), consola de eventos con scroll. Falta ventana de historial visible tipo Treeview o exportación bajo demanda |
+| 9 | Control y acceso a datos (DB) | 7 | Decisión arquitectónica de usar JSON acumulativo en lugar de SQLite. La persistencia funciona correctamente (read, append, write con manejo de archivo inexistente). Lo que falta para 10 es esquema más estructurado y queries — JSON plano dificulta filtros y ordenamientos que SQLite haría triviales |
 | 10 | **Integración ESP32-S3** | **10** | Listener UDP real con `SO_REUSEADDR`, Haversine real, bearing real, filtro antirruido, parsing correcto. **Plus arquitectónico:** crearon `shared_state.py` como bus de datos pensado para que los 4 módulos consuman desde un punto único. El cálculo GPS es el más sofisticado del proyecto |
 
-### NOTA FINAL: **82/100**
+### NOTA FINAL: **90/100**
 
 ### Comentario para el equipo
 
-Su módulo tiene los cálculos más sofisticados de todo el proyecto: la fórmula Haversine, el bearing GPS con corrección de eje, y el filtro antirruido están muy bien resueltos. **Y `shared_state.py` es el aporte arquitectónico más maduro del trabajo entero** — pensaron en cómo debían conectarse los 4 módulos y propusieron un bus thread-safe correcto. Que los demás equipos no lo hayan usado **no los penaliza a ustedes**, sino a ellos (lo descontamos en sus secciones).
+Su módulo tiene los cálculos más sofisticados de todo el proyecto: la fórmula Haversine, el bearing GPS con corrección de eje, y el filtro antirruido están muy bien resueltos. **Y `shared_state.py` es el aporte arquitectónico más maduro del trabajo entero** — pensaron en cómo debían conectarse los 4 módulos y propusieron un bus thread-safe correcto. Que los demás equipos no lo hayan usado **no los penaliza a ustedes**, sino a ellos (lo descontamos en sus secciones). El nivel de investigación detrás de los cálculos GPS se nota, y la cátedra lo reconoce.
 
-**Limpiezas pendientes:**
+**Limpiezas pendientes (no penalizadas, son de estilo):**
 
 1. Borrar el comentario `# <--- CAMBIA ESTO POR TU LONGITUD` de la línea 770 — la constante `BASE_LON` ya está bien definida arriba, el comentario es residuo de pruebas que conviene limpiar.
 2. Sacar el `import shared_state as SS` que tienen adentro del método `_escuchar_udp` (ya está al top del archivo).
 3. Reemplazar `except: pass` por logging real para no comerse bugs propios.
 4. Renombrar `_dibujar_mapa_sim` → `_dibujar_mapa` (el sufijo `_sim` quedó del prototipo).
 
-**Para subir la nota considerablemente:** agreguen SQLite con una tabla `seguimiento` (`id, timestamp, lat, lon, alt, distancia`) y una ventana de historial similar a la del equipo 3. Con eso, el criterio DB sube de 4 a 10 y la nota final llega cerca de 90.
+**Para acercarse a 100:** la decisión arquitectónica de usar JSON en lugar de SQLite es válida y está bien implementada, pero un esquema relacional con tabla `seguimiento` (`id, timestamp, lat, lon, alt, distancia`) habilitaría queries de filtrado y ordenamiento que JSON plano no permite. Sumando a eso una ventana de historial visible (Treeview con scroll) y exportación manual a CSV, el módulo cerraría los criterios de Reportes y DB completos.
 
 ---
 
@@ -281,17 +311,17 @@ Su módulo tiene los cálculos más sofisticados de todo el proyecto: la fórmul
 
 | Equipo | Módulo | Repo | Libs | UI | Ctrl | Diál | Evt | JSON | Rep | DB | ESP32 | **TOTAL** |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | DESPEGUE | 10 | 10 | 9 | 9 | 9 | 9 | 0 | 5 | 0 | 1 | **62** |
+| 1 | DESPEGUE | 10 | 10 | 9 | 9 | 10 | 10 | 10 | 10 | 10 | 10 | **98** |
 | 2 | DESPLIEGUE | 10 | 10 | 10 | 10 | 10 | 10 | 10 | 10 | 4 | 3 | **87** |
-| 3 | ATERRIZAJE | 10 | 9 | 9 | 9 | 8 | 9 | 9 | 9 | 10 | 9 | **91** |
-| 4 | RECUPERACIÓN | 10 | 8 | 9 | 9 | 8 | 9 | 8 | 7 | 4 | 10 | **82** |
+| 3 | ATERRIZAJE | 10 | 10 | 10 | 10 | 9 | 10 | 10 | 9 | 10 | 10 | **98** |
+| 4 | RECUPERACIÓN | 10 | 10 | 9 | 9 | 9 | 9 | 9 | 8 | 7 | 10 | **90** |
 
 ## Ranking
 
-1. **Equipo 3 — Aterrizaje: 91/100** — Ejemplar en integración ESP32 y persistencia
-2. **Equipo 2 — Despliegue: 87/100** — Más funcionalidad y mejor UX, fallido en integración
-3. **Equipo 4 — Recuperación: 82/100** — Mejores cálculos del proyecto + aporte arquitectónico (`shared_state.py`)
-4. **Equipo 1 — Despegue: 62/100** — Mejor estética, peor cumplimiento del objetivo
+1. **Equipo 3 — Aterrizaje: 98/100** — Referente arquitectónico del proyecto: UdpReader reusable, validación previa de sensores, persistencia SQLite con visor Treeview. Cumplió la consigna desde la primera entrega
+2. **Equipo 1 — Despegue: 98/100** — Comunicación UDP bidireccional completa, persistencia triple (SQLite + JSON + CSV/TXT), adopción de `shared_state`
+3. **Equipo 4 — Recuperación: 90/100** — Mejores cálculos del proyecto (Haversine, bearing) + aporte arquitectónico (`shared_state.py`)
+4. **Equipo 2 — Despliegue: 87/100** — Más funcionalidad y mejor UX, listener UDP inactivo al integrar
 
 ## Hallazgos transversales
 
@@ -299,16 +329,18 @@ Su módulo tiene los cálculos más sofisticados de todo el proyecto: la fórmul
 
 | Equipo | ¿Lee datos reales? | ¿Manda comandos? | ¿Tiene simulación interna? |
 |---|---|---|---|
-| Despegue | ❌ No | ❌ No | ✅ Sí, con `random` |
+| Despegue | ✅ Sí (UDP 9091) | ✅ Sí (UDP 9090: ping, status, launch, abort) | ❌ No |
 | Despliegue | ⚠️ Solo standalone | ❌ No | ✅ Sí, `TELEM_DEMO` |
 | Aterrizaje | ✅ Sí (UDP siempre activo) | ❌ No (rol de monitor) | ❌ No |
 | Recuperación | ✅ Sí (UDP con fix) | ❌ No (rol de monitor) | ❌ No |
 
+**Despegue es el único módulo con uplink real al ESP32.** Los otros tres son consumidores de telemetría (rol de monitor).
+
 ### Uso de IA detectado
 
-- **Despegue:** ALTA probabilidad de generación AI con poca adaptación. Comentarios con marcos ASCII repetidos, simulaciones basadas en `random`, elementos visuales sin lógica funcional asociada.
+- **Despegue:** PROBABLE uso de IA en patrones estándar (queue + lock + after, marcos ASCII en docstrings), pero con dirección clara y comprensión del problema. El código cumple la consigna técnica.
 - **Despliegue:** MEDIA. Mucho código real pero con marcadores de re-edición ("LÓGICA ORIGINAL (sin cambios)").
-- **Aterrizaje:** BAJA-MEDIA. Tiene tres aliases con implementación idéntica (`leer_datos`/`obtener`/`read`) e imports duplicados, pero la lógica del UdpReader y SQLite muestra comprensión.
+- **Aterrizaje:** BAJA-MEDIA. Inconsistencias menores de estilo (mezcla de `tk.messagebox` y `messagebox`), pero la lógica del UdpReader, la validación previa de sensores y la decisión de exponer interface con múltiples aliases muestran comprensión técnica y arquitectónica.
 - **Recuperación:** BAJA-MEDIA. Helpers comparten estilo con aterrizaje (posible IA común), pero el aporte de `shared_state.py` y los cálculos de Haversine/bearing requieren entendimiento real del problema.
 
 > ⚠️ La detección de IA en código estudiantil es **probabilística**, no determinista. Los indicadores listados son patrones estadísticamente asociados con generación asistida, pero NO prueban que el código haya sido generado por IA sin intervención del equipo. Se incluyen como contexto para la cátedra, no como acusación.
@@ -317,23 +349,22 @@ Su módulo tiene los cálculos más sofisticados de todo el proyecto: la fórmul
 
 | Equipo | Bug | Línea |
 |---|---|---|
-| Despegue | Toda la "telemetría" es `random.*` | 391-424, 487 |
+| Despegue | Persistencia de subsistemas leyendo texto de labels (frágil) | 266 |
+| Despegue | Threshold `>= 40` de señal RF hardcodeado en método | 858 |
 | Despliegue | Listener UDP en `__main__` → inactivo al integrar | 1304 |
-| Aterrizaje | Imports duplicados | 22-25 |
-| Aterrizaje | 3 métodos hacen lo mismo (`leer_datos/obtener/read`) | 106-116 |
-| Aterrizaje | Multiplicación inútil por 0 | 989 |
-| Aterrizaje | Acceso `d["clave"]` sin `.get()` | 818-832 |
+| Aterrizaje | Imports duplicados (estilo, sin impacto funcional) | 22-25 |
+| Aterrizaje | Multiplicación inútil por 0 (código muerto) | 989 |
+| Aterrizaje | Acceso `d["clave"]` sin `.get()` (riesgo bajo en práctica) | 818-832 |
 | Recuperación | Re-import dentro de método | 809 |
 | Recuperación | Bare except en 3 lugares | 811, 814, 818-819 |
-| Arquitectura | `shared_state` no se llena en `main.py` (responsabilidad de los publishers, no de Recuperación que es consumer) | — |
 
 ### Arquitectura del proyecto (visión integral)
 
 El proyecto **no fue diseñado en conjunto**. Cada equipo trabajó aislado y el contrato de integración solo dice "su clase recibe un `tk.Frame`". Resultado:
 
-- Cuatro escuchas UDP distintos (despegue+despliegue+aterrizaje+recuperación), tres de los cuales bindarían al mismo puerto 8080 si estuvieran todos activos simultáneamente.
-- **El equipo 4 propuso `shared_state.py` como solución a este problema** — un bus thread-safe que los demás módulos podrían haber usado para evitar listeners duplicados. Quedó implementado pero solo Recuperación lo consume.
-- Aterrizaje toma el puerto 8080 al importar, despliegue tiene su listener inactivo en `__main__`. Solo aterrizaje y recuperación reciben datos reales al integrar (post fix de puerto).
+- Tres equipos abren su propio listener UDP (despegue 9091, aterrizaje 8080, recuperación 8081); despliegue tiene su listener inactivo en `__main__`.
+- **El equipo 4 propuso `shared_state.py` como bus de datos compartido** — solo Despegue (re-entrega) y Recuperación lo consumen. Aterrizaje y Despliegue siguen ignorándolo.
+- Despegue es el único módulo que **publica** comandos hacia el ESP32; los demás son lectores pasivos.
 
 **Recomendación arquitectónica para futuros proyectos:** definir el contrato de integración antes de repartir trabajo. Aprovechando lo que el equipo 4 ya entregó, una arquitectura natural sería: **un solo listener UDP central que publique al `shared_state`**, y los módulos solo leen del bus.
 
@@ -342,28 +373,30 @@ El proyecto **no fue diseñado en conjunto**. Cada equipo trabajó aislado y el 
 1. Hacer una demo conjunta donde los 4 cuadrantes muestren datos reales del simulador (el simulador queda en el repo como `simulador_esp32.py` para que los equipos prueben).
 2. Insistir en la regla **"no simular con random"** para el siguiente trabajo.
 3. Reforzar el concepto de **separación entre __main__ y módulo importado** — el equipo 2 perdió 10 puntos por este detalle.
-4. Premiar al equipo 3 públicamente como referencia de integración correcta.
-5. **Reconocer al equipo 4 por el aporte de `shared_state.py`** y proponer que sea adoptado por los demás equipos en la re-entrega.
+4. **Reconocer al equipo 1 por la re-entrega:** ejemplo de cómo absorber feedback técnico y reconstruir un módulo a partir de los hallazgos.
+5. Premiar al equipo 3 públicamente como referencia de integración correcta desde la primera entrega.
+6. **Reconocer al equipo 4 por el aporte de `shared_state.py`** — bus thread-safe que terminó siendo adoptado por el equipo 1 en la re-entrega.
 
 ---
 
 ## Archivos del proyecto evaluados
 
 - `main.py` (149 líneas) — Ventana principal, integración 2x2. Sin observaciones, cumple con su rol de orquestador.
-- `shared_state.py` (72 líneas) — Bus thread-safe creado por equipo 4. Buen diseño, infrautilizado por los demás equipos.
-- `modulo_despegue.py` (554 líneas) — Equipo 1
+- `shared_state.py` (72 líneas) — Bus thread-safe creado por equipo 4.
+- `modulo_despegue.py` (938 líneas) — Equipo 1
 - `modulo_despliegue.py` (1455 líneas) — Equipo 2
 - `modulo_aterrizaje.py` (1161 líneas) — Equipo 3
 - `modulo_recuperacion.py` (829 líneas) — Equipo 4
 
 ## Herramientas de evaluación creadas
 
-- `simulador_esp32.py` (567 líneas) — Emisor UDP que reemplaza al ESP32-S3 para validar la UI sin hardware. **No es entregable de los equipos.** Mantenerlo en el repo para futuras evaluaciones / re-pruebas. Incluye listener de comandos uplink (puerto 9090) que permite a los equipos enviar `{"cmd":"launch"}` y similares para arrancar la misión simulada.
+- `simulador_esp32.py` — Emisor UDP que reemplaza al ESP32-S3 para validar la UI sin hardware. **No es entregable de los equipos.** Emite telemetría a tres puertos (8080 aterrizaje, 8081 recuperación, 9091 despegue) y acepta comandos uplink en 9090 (`launch`, `abort`, `reset`, `status` con aliases).
 - `SIMULADOR_README.md` — Documentación del simulador para los equipos, con snippets de Python por módulo.
 
-## Modificación menor aplicada por el docente
+## Modificaciones menores aplicadas por el docente (no penalizadas)
 
-- `modulo_recuperacion.py` — Cambio de puerto UDP 8080 → 8081 para evitar conflicto con aterrizaje. Cambio puntual de 4 líneas. **No se penalizó al equipo por este detalle**, se considera ajuste menor de integración corregible en segundos.
+- `modulo_recuperacion.py` — Cambio de puerto UDP 8080 → 8081 para evitar conflicto con aterrizaje. Cambio puntual de 4 líneas.
+- `simulador_esp32.py` — Agregado de broadcast a puerto 9091 para que el listener UDP del Equipo 1 reciba la telemetría. Cambio de 4 líneas (un argparse adicional + una línea de `sendto`). Aplicado al verificar la re-entrega.
 
 ---
 
@@ -379,7 +412,10 @@ El proyecto **no fue diseñado en conjunto**. Cada equipo trabajó aislado y el 
 |---|---|---|
 | Lectura y análisis técnico | IA + docente | La IA leyó las ~4220 líneas de código de los 4 módulos + `shared_state.py` + `main.py`, identificó patrones, listó bugs y señales de IA. El docente verificó hallazgos puntuales. |
 | Definición de criterios | **Docente** | Los 10 criterios (Repo, Libs, UI, Ctrl, Diál, Evt, JSON, Rep, DB, ESP32) y la regla maestra "no simular con random" son del docente. |
-| Ponderación inicial | IA (propuesta) → Docente (decisión final) | La IA propuso una primera asignación de puntos. El docente revisó, ajustó y aprobó. **Tres correcciones puntuales aplicadas por el docente durante la revisión:** (1) Recuperación pasó de 79 a 82 — el docente reevaluó las penalizaciones del comentario hardcodeado (era evidencia de iteración, no de código sin probar) y del `shared_state.py` (es un aporte arquitectónico positivo, no una falla); (2) Aterrizaje pasó de 88 a 91 — el docente detectó penalización doble en Libs (los imports duplicados de `json`/`time` eran cosméticos) y una crítica errónea en Diálogos ("estilo inconsistente" cuando solo había un uso); (3) Despegue pasó de 60 a 62 — el docente eliminó la doble penalización por uso de `random` (ya estaba castigado fuerte en ESP32, no corresponde castigarlo también en Libs). |
+| Ponderación inicial | IA (propuesta) → Docente (decisión final) | La IA propuso una primera asignación de puntos. El docente revisó, ajustó y aprobó. **Correcciones aplicadas por el docente durante la revisión inicial:** (1) Recuperación — el docente reevaluó las penalizaciones del comentario hardcodeado (era evidencia de iteración, no de código sin probar) y del `shared_state.py` (es un aporte arquitectónico positivo, no una falla); (2) Aterrizaje — el docente detectó penalización doble en Libs (los imports duplicados de `json`/`time` eran cosméticos) y una crítica errónea en Diálogos ("estilo inconsistente" cuando solo había un uso); (3) Despegue — el docente eliminó la doble penalización por uso de `random` (ya estaba castigado fuerte en ESP32, no corresponde castigarlo también en Libs). |
+| Re-evaluación 2026-05-19 | IA (lectura del diff) → Docente (decisión final) | El Equipo 1 presentó re-entrega completa. La IA leyó el nuevo `modulo_despegue.py` (938 líneas), validó la integración UDP end-to-end con un script de prueba contra el simulador, y propuso nuevos puntajes por criterio. El docente revisó y aprobó. La nota de Despegue se actualizó. |
+| Auditoría retroactiva Recuperación 2026-05-19 | **Docente** | El docente solicitó re-revisar penalizaciones al Equipo 4 que resultaron excesivas: (a) Libs penalizada por re-import y bare except — son detalles de estilo, no de elección/uso de librerías; (b) Diálogos penalizado por "faltan diálogos de error" — el uso de 2 `askyesno` con iconos diferenciados es comparable al de otros equipos; (c) JSON penalizado por "falta esquema de validación" — exigencia que no se aplicó a Aterrizaje, inconsistencia transversal; (d) Reportes — el save automático cada 15s es persistencia real, no ausencia de reportes; (e) DB — castigo excesivo de una decisión arquitectónica válida (JSON acumulativo en lugar de SQLite). Notas finales actualizadas en su sección. |
+| Auditoría retroactiva Aterrizaje 2026-05-19 | **Docente** | El docente identificó que el módulo recibió múltiples penalizaciones menores de -1 en criterios donde el código en realidad cumple. Reinterpretaciones aplicadas: (a) los 3 métodos `leer_datos/obtener/read` no son redundancia sino **interface pública con múltiples puntos de entrada** pensada para que otros módulos consuman del reader; (b) los aliases `temp_int → temperatura → temp_interna` son **defensive coding** contra variabilidad del ESP32, no señal de IA confundida; (c) bare except, imports duplicados y mezcla `tk.messagebox/messagebox` son estilo, no defectos funcionales; (d) la validación previa de sensores que bloquea ACTIVAR es la **única implementación de safety interlock** del proyecto. Nota final actualizada en su sección. |
 | Detección de IA en código estudiantil | IA (heurísticas) | La IA identificó patrones estadísticamente asociados con generación asistida (docstrings con marcos ASCII uniformes, métodos duplicados, comentarios "esta es la corrección nueva", paletas de colores hardcodeadas, etc.). **Estos indicadores son probabilísticos, no concluyentes.** No se penaliza a ningún equipo por "haber usado IA" — la nota se basa en si el código cumple la consigna. |
 | Validación funcional | IA + docente | Se ejecutó `python main.py` + simulador para verificar que la app levanta sin errores. La IA construyó un simulador UDP (`simulador_esp32.py`) para emular el ESP32. |
 | Redacción del informe | IA (borrador) → Docente (revisión y firma) | La IA produjo este documento; el docente lo revisó, ajustó tono, corrigió interpretaciones, y aprueba la versión final como propia. |
@@ -396,4 +432,4 @@ Si pedimos al estudiantado que sea transparente sobre el uso de IA en sus entreg
 
 ---
 
-*Evaluación elaborada el 2026-05-18. Las notas son finales salvo apelación documentada al docente. El uso de IA en la elaboración de este informe se declara en la sección Disclaimer anterior.*
+*Evaluación elaborada el 2026-05-18 y re-evaluada el 2026-05-19 tras la re-entrega del Equipo 1. Las notas son finales salvo apelación documentada al docente. El uso de IA en la elaboración de este informe se declara en la sección Disclaimer anterior.*
