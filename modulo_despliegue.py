@@ -1,17 +1,227 @@
 """
-╔══════════════════════════════════════════════════════════════╗
-║  MÓDULO DESPLIEGUE v3 — Equipo 2                            ║
-║                                                             ║
-╚══════════════════════════════════════════════════════════════╝
+
+MÓDULO DESPLIEGUE v3 — Equipo 2                          
+
 """
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import time, math, json, os, datetime, csv
+import threading, socket
 
-# ═══════════════════════════════════════════════════════════════
-#  PALETA — Light Aerospace Control
-# ═══════════════════════════════════════════════════════════════
+# ── BASE DE DATOS (MySQL / XAMPP) 
+try:
+    import mysql.connector
+    from mysql.connector import Error as MySQLError
+    _MYSQL_DISPONIBLE = True
+except ImportError:
+    _MYSQL_DISPONIBLE = False
+    print("[DB] mysql-connector-python no instalado. "
+          "Ejecuta: pip install mysql-connector-python")
+
+DB_CONFIG = {
+    "host":     "localhost",
+    "port":     3306,
+    "user":     "root",
+    "password": "",           
+    "database": "cohete_db",
+}
+
+_SQL_CREAR_BD = "CREATE DATABASE IF NOT EXISTS cohete_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+_SQL_TABLAS = [
+    """CREATE TABLE IF NOT EXISTS sesiones (
+        id             INT AUTO_INCREMENT PRIMARY KEY,
+        nombre         VARCHAR(120)  NOT NULL,
+        mision         VARCHAR(60)   DEFAULT 'ALPHA-001',
+        modulo         VARCHAR(60)   DEFAULT 'DESPLIEGUE-v3',
+        notas          TEXT,
+        fecha_inicio   DATETIME      NOT NULL,
+        fecha_guardado DATETIME      NOT NULL,
+        fase_final     VARCHAR(30),
+        max_altitud_m  FLOAT,
+        min_velocidad  FLOAT,
+        total_eventos  INT           DEFAULT 0
+    ) ENGINE=InnoDB""",
+    """CREATE TABLE IF NOT EXISTS eventos (
+        id         INT AUTO_INCREMENT PRIMARY KEY,
+        sesion_id  INT          NOT NULL,
+        timestamp  VARCHAR(12)  NOT NULL,
+        tag        VARCHAR(10)  NOT NULL,
+        mensaje    TEXT,
+        FOREIGN KEY (sesion_id) REFERENCES sesiones(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB""",
+    """CREATE TABLE IF NOT EXISTS telemetria (
+        id            INT AUTO_INCREMENT PRIMARY KEY,
+        sesion_id     INT    NOT NULL,
+        muestra_idx   INT    NOT NULL,
+        altitud_m     FLOAT,
+        velocidad_ms  FLOAT,
+        FOREIGN KEY (sesion_id) REFERENCES sesiones(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB""",
+]
+
+
+class DBManager:
+    """Gestiona la conexion y escritura a MySQL (XAMPP).
+    
+    Uso rapido:
+        db = DBManager()
+        if db.conectar():
+            sid = db.guardar_sesion(datos_dict)
+            db.desconectar()
+    """
+
+    def __init__(self):
+        self._conn   = None
+        self._cursor = None
+        self.activa  = False
+
+    def conectar(self):
+        if not _MYSQL_DISPONIBLE:
+            return False
+        try:
+            cfg_sin_bd = {k: v for k, v in DB_CONFIG.items() if k != "database"}
+            tmp = mysql.connector.connect(**cfg_sin_bd)
+            cur = tmp.cursor()
+            cur.execute(_SQL_CREAR_BD)
+            tmp.commit()
+            cur.close()
+            tmp.close()
+
+            self._conn   = mysql.connector.connect(**DB_CONFIG)
+            self._cursor = self._conn.cursor()
+            for stmt in _SQL_TABLAS:
+                self._cursor.execute(stmt)
+            self._conn.commit()
+            self.activa = True
+            print("[DB] Conectado a MySQL — cohete_db lista.")
+            return True
+        except Exception as e:
+            print(f"[DB] Error de conexion: {e}")
+            self.activa = False
+            return False
+
+    def desconectar(self):
+        try:
+            if self._cursor:
+                self._cursor.close()
+            if self._conn and self._conn.is_connected():
+                self._conn.close()
+        except Exception:
+            pass
+        self.activa = False
+
+    def reconectar(self):
+        self.desconectar()
+        return self.conectar()
+
+    def guardar_sesion(self, sesion):
+        if not self.activa:
+            return None
+        try:
+            meta   = sesion.get("meta",   {})
+            estado = sesion.get("estado", {})
+            hist   = sesion.get("historial", {})
+            evs    = sesion.get("eventos", [])
+
+            ahora = datetime.datetime.now()
+            ts_inicio = meta.get("timestamp", ahora.isoformat())
+            try:
+                dt_inicio = datetime.datetime.fromisoformat(ts_inicio)
+            except Exception:
+                dt_inicio = ahora
+
+            self._cursor.execute(
+                """INSERT INTO sesiones
+                   (nombre, mision, modulo, notas,
+                    fecha_inicio, fecha_guardado,
+                    fase_final, max_altitud_m, min_velocidad, total_eventos)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    meta.get("nombre",  "sin_nombre"),
+                    meta.get("mision",  "ALPHA-001"),
+                    meta.get("modulo",  "DESPLIEGUE-v3"),
+                    meta.get("notas",   ""),
+                    dt_inicio, ahora,
+                    estado.get("fase_actual",   "STANDBY"),
+                    estado.get("max_altitud_m", 0.0),
+                    estado.get("min_velocidad", 0.0),
+                    len(evs),
+                )
+            )
+            sesion_id = self._cursor.lastrowid
+
+            if evs:
+                self._cursor.executemany(
+                    "INSERT INTO eventos (sesion_id, timestamp, tag, mensaje) VALUES (%s, %s, %s, %s)",
+                    [(sesion_id, e.get("ts",""), e.get("tag",""), e.get("msg","")) for e in evs]
+                )
+
+            alts = hist.get("altitud",   [])
+            vels = hist.get("velocidad", [])
+            n    = max(len(alts), len(vels))
+            if n:
+                self._cursor.executemany(
+                    "INSERT INTO telemetria (sesion_id, muestra_idx, altitud_m, velocidad_ms) VALUES (%s, %s, %s, %s)",
+                    [(sesion_id, i,
+                      float(alts[i]) if i < len(alts) else None,
+                      float(vels[i]) if i < len(vels) else None)
+                     for i in range(n)]
+                )
+
+            self._conn.commit()
+            print(f"[DB] Sesion #{sesion_id} guardada ({len(evs)} eventos, {n} muestras).")
+            return sesion_id
+        except Exception as e:
+            print(f"[DB] Error al guardar sesion: {e}")
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
+            return None
+
+    def listar_sesiones(self):
+        if not self.activa:
+            return []
+        try:
+            self._cursor.execute(
+                "SELECT id, nombre, mision, fecha_guardado, fase_final, total_eventos "
+                "FROM sesiones ORDER BY id DESC LIMIT 50"
+            )
+            cols = ["id", "nombre", "mision", "fecha_guardado", "fase_final", "total_eventos"]
+            return [dict(zip(cols, row)) for row in self._cursor.fetchall()]
+        except Exception as e:
+            print(f"[DB] Error al listar sesiones: {e}")
+            return []
+
+    def insertar_evento_rt(self, sesion_id, ts, tag, msg):
+        if not self.activa or sesion_id is None:
+            return
+        try:
+            self._cursor.execute(
+                "INSERT INTO eventos (sesion_id, timestamp, tag, mensaje) VALUES (%s, %s, %s, %s)",
+                (sesion_id, ts, tag, msg)
+            )
+            self._conn.commit()
+        except Exception as e:
+            print(f"[DB] Error insertar evento: {e}")
+
+    def insertar_telemetria_rt(self, sesion_id, idx, altitud, velocidad):
+        if not self.activa or sesion_id is None:
+            return
+        try:
+            self._cursor.execute(
+                "INSERT INTO telemetria (sesion_id, muestra_idx, altitud_m, velocidad_ms) VALUES (%s,%s,%s,%s)",
+                (sesion_id, idx, altitud, velocidad)
+            )
+            self._conn.commit()
+        except Exception as e:
+            print(f"[DB] Error insertar telemetria: {e}")
+
+
+
+
 BG_ROOT    = "#F0F4F8"
 BG_PANEL   = "#FFFFFF"
 BG_DEEP    = "#E2E8F0"
@@ -56,21 +266,6 @@ FASES_BG = {
     "ATERRIZAJE": "#F3E5F5",
 }
 
-TELEM_DEMO = [
-    {"altitud_m":   0, "velocidad_ms":  0.0, "fase":"STANDBY",    "bateria_pct":98.0},
-    {"altitud_m":  45, "velocidad_ms": 28.5, "fase":"ASCENSO",    "bateria_pct":97.8},
-    {"altitud_m": 120, "velocidad_ms": 55.2, "fase":"ASCENSO",    "bateria_pct":97.5},
-    {"altitud_m": 230, "velocidad_ms": 42.1, "fase":"ASCENSO",    "bateria_pct":97.1},
-    {"altitud_m": 310, "velocidad_ms": 18.4, "fase":"ASCENSO",    "bateria_pct":96.8},
-    {"altitud_m": 387, "velocidad_ms":  3.2, "fase":"APOGEO",     "bateria_pct":96.5},
-    {"altitud_m": 391, "velocidad_ms":  0.8, "fase":"APOGEO",     "bateria_pct":96.4},
-    {"altitud_m": 388, "velocidad_ms": -1.1, "fase":"DESPLIEGUE", "bateria_pct":96.2},
-    {"altitud_m": 375, "velocidad_ms": -5.5, "fase":"DESCENSO",   "bateria_pct":96.0},
-    {"altitud_m": 290, "velocidad_ms": -7.0, "fase":"DESCENSO",   "bateria_pct":95.4},
-    {"altitud_m": 120, "velocidad_ms": -6.5, "fase":"DESCENSO",   "bateria_pct":94.8},
-    {"altitud_m":   5, "velocidad_ms": -2.1, "fase":"ATERRIZAJE", "bateria_pct":94.3},
-]
-
 
 class ModuloDespliegue:
     def __init__(self, parent_frame):
@@ -89,28 +284,46 @@ class ModuloDespliegue:
         self._para_anim      = 0.0
         self._tick           = 0
         self._blink          = True
-        self._demo_idx       = 0
         self._max_alt        = 0.0
         self._min_vel        = 9999.0
 
-        # ── MEJORAS ───────────────────────────────────────────
-        self._umbral_alt_m   = 50.0          # configurable desde UI
-        self._fase_ts        = time.time()   # timestamp inicio fase actual
-        self._MAX_EVENTOS    = 500           # límite de eventos en memoria
-
+      
+        self._umbral_alt_m   = 50.0         
+        self._fase_ts        = time.time()   
+        self._MAX_EVENTOS    = 500           
         self.on_despliegue_confirmado = None
+
+    
+        self._udp_alt_ant     = 0.0
+        self._udp_subiendo    = False
+        self._udp_apo_det     = False
+        self._udp_dep_done    = False
+        self._udp_dep_ant     = False
+        self._udp_cnt_baj     = 0
+        self._udp_cnt_est     = 0
+        self._udp_alt_est_ref = 0.0
+
+        # ── BASE DE DATOS (MySQL/XAMPP) — init ANTES de _build_ui ──────────
+        self._db           = DBManager()
+        self._db_sesion_id = None    # ID de sesión activa en BD
+        self._tel_idx      = 0       # Contador de muestras de telemetría RT
 
         self._build_ui()
         self._loop()
 
-    # ═══════════════════════════════════════════════════════════
-    #  BUILD UI
-    # ═══════════════════════════════════════════════════════════
+        hilo_udp = threading.Thread(
+            target=self._servidor_udp, daemon=True)
+        hilo_udp.start()
+
+        hilo_db = threading.Thread(target=self._conectar_db_async, daemon=True)
+        hilo_db.start()
+
+   
 
     def _build_ui(self):
         self.parent.configure(bg=BG_ROOT)
 
-        # ── CIERRE SEGURO ─────────────────────────────────────
+       
         root = self.parent.winfo_toplevel()
         root.protocol("WM_DELETE_WINDOW", self._on_closing)
 
@@ -139,7 +352,7 @@ class ModuloDespliegue:
         self._panel_confirmacion()
         self._panel_guardado()
 
-    # ── TOPBAR ───────────────────────────────────────────────────
+   
     def _build_topbar(self):
         bar = tk.Frame(self.parent, bg=NAVY, height=52)
         bar.pack(fill="x")
@@ -168,10 +381,11 @@ class ModuloDespliegue:
         right.pack(side="right", fill="y")
 
         for txt, cmd, clr, bg in [
-            ("↓ GUARDAR", self._guardar_sesion, NAVY, "#64B5F6"),
-            ("↑ CARGAR",  self._cargar_sesion,  NAVY, "#4DB6AC"),
-            ("⟳ RESET",   self._reset_mision,   NAVY, "#EF9A9A"),
-            ("📋 LOG",    self._exportar_log,    NAVY, "#CE93D8"),
+            ("↓ GUARDAR", self._guardar_sesion,    NAVY, "#64B5F6"),
+            ("↑ CARGAR",  self._cargar_sesion,     NAVY, "#4DB6AC"),
+            ("⟳ RESET",   self._reset_mision,      NAVY, "#EF9A9A"),
+            ("📋 LOG",    self._exportar_log,       NAVY, "#CE93D8"),
+            ("🗄 BD",     self._mostrar_sesiones_db, NAVY, "#A5D6A7"),
         ]:
             tk.Button(right, text=txt,
                       font=(SANS, 8, "bold"),
@@ -190,10 +404,11 @@ class ModuloDespliegue:
                                       font=(SANS, 8, "bold"),
                                       bg=NAVY, fg=TXT_MUTED)
         self.lbl_fase_top.pack()
+        self.lbl_db_st = tk.Label(clk_box, text="DB ○",
+                                   font=(SANS, 7), bg=NAVY, fg="#EF5350")
+        self.lbl_db_st.pack()
 
-    # ═══════════════════════════════════════════════════════════
-    #  COLUMNA IZQUIERDA
-    # ═══════════════════════════════════════════════════════════
+
 
     def _panel_datos_grandes(self):
         self._tarjeta_dato(
@@ -259,7 +474,7 @@ class ModuloDespliegue:
             lbl.pack(side="left", padx=6)
             self.cond_items[key] = (ind, lbl)
 
-        # ── UMBRAL DE ALTITUD CONFIGURABLE ────────────────────
+ 
         tk.Frame(card, bg=BDR, height=1).pack(fill="x", pady=(6, 4))
         umb_row = tk.Frame(card, bg=BG_PANEL)
         umb_row.pack(fill="x")
@@ -276,9 +491,7 @@ class ModuloDespliegue:
                   cursor="hand2",
                   command=self._aplicar_umbral).pack(side="left")
 
-    # ═══════════════════════════════════════════════════════════
-    #  COLUMNA CENTRAL
-    # ═══════════════════════════════════════════════════════════
+   
 
     def _panel_fase(self):
         card = self._card(self.col_M, "FASE DE VUELO", BLUE)
@@ -444,9 +657,6 @@ class ModuloDespliegue:
         self._log("MÓDULO DESPLIEGUE v3 — INICIADO", "SYS")
         self._log("Aguardando datos de telemetría.", "SYS")
 
-    # ═══════════════════════════════════════════════════════════
-    #  COLUMNA DERECHA
-    # ═══════════════════════════════════════════════════════════
 
     def _panel_paracaidas(self):
         card = self._card(self.col_R, "PARACAÍDAS", ORANGE_V)
@@ -558,9 +768,6 @@ class ModuloDespliegue:
             font=(SANS, 8), bg=BG_PANEL, fg=TXT_MUTED)
         self.lbl_save_st.pack(anchor="w")
 
-    # ═══════════════════════════════════════════════════════════
-    #  HELPER: tarjeta con header
-    # ═══════════════════════════════════════════════════════════
 
     def _card(self, parent, title, accent=BLUE):
         outer = tk.Frame(parent, bg=BG_PANEL,
@@ -596,9 +803,7 @@ class ModuloDespliegue:
         }
         return mix.get(hex_color, "#F5F5F5")
 
-    # ═══════════════════════════════════════════════════════════
-    #  PARACAÍDAS — canvas
-    # ═══════════════════════════════════════════════════════════
+
 
     def _draw_chute(self, deployed=False, anim=0.0):
         c = self.cv_chute
@@ -652,9 +857,7 @@ class ModuloDespliegue:
             c.create_text(cx, 5, text=f"✓ {est}",
                           font=(SANS, 9, "bold"), fill=color, anchor="n")
 
-    # ═══════════════════════════════════════════════════════════
-    #  GRÁFICAS
-    # ═══════════════════════════════════════════════════════════
+
 
     def _update_graficas(self):
         self._draw_curve(self.cv_alt, self._alt_hist,
@@ -711,9 +914,6 @@ class ModuloDespliegue:
         c.create_text(w-4, 4, text=txt,
                       fill=line_color, font=(MONO, 9, "bold"), anchor="ne")
 
-    # ═══════════════════════════════════════════════════════════
-    #  LOOP
-    # ═══════════════════════════════════════════════════════════
 
     def _loop(self):
         self._tick += 1
@@ -727,7 +927,7 @@ class ModuloDespliegue:
         self.lbl_fase_top.config(text=f"{sym} {self.fase_actual}", fg=color)
         self.top_band.config(bg=color)
 
-        # ── CRONÓMETRO DE FASE ────────────────────────────────
+     
         elapsed = int(time.time() - self._fase_ts)
         mm, ss = divmod(elapsed, 60)
         self.lbl_fase_timer.config(
@@ -740,9 +940,6 @@ class ModuloDespliegue:
         self._update_graficas()
         self.parent.after(120, self._loop)
 
-    # ═══════════════════════════════════════════════════════════
-    #  LÓGICA DE DATOS
-    # ═══════════════════════════════════════════════════════════
 
     def _actualizar(self, datos: dict):
         self.altitud   = datos.get("altitud_m",    self.altitud)
@@ -752,6 +949,7 @@ class ModuloDespliegue:
 
         self._alt_hist.append(self.altitud)
         self._vel_hist.append(self.velocidad)
+        self._telem_a_db(self.altitud, self.velocidad)  # MySQL RT
         if len(self._alt_hist) > 200: self._alt_hist = self._alt_hist[-200:]
         if len(self._vel_hist) > 200: self._vel_hist = self._vel_hist[-200:]
 
@@ -816,7 +1014,7 @@ class ModuloDespliegue:
                 self.fase_segs[f].config(bg=BG_DEEP)
 
         self._log(f"FASE: {prev} → {nueva}", "FASE")
-        self._fase_ts = time.time()   # reinicia cronómetro de fase
+        self._fase_ts = time.time()  
         if nueva == "DESPLIEGUE":
             self._activar_paracaidas()
 
@@ -852,14 +1050,12 @@ class ModuloDespliegue:
                                    fg=TEAL, bg="#E8F5E9")
         self._log("PARACAÍDAS ACTIVADO — NOMINAL", "CHT")
 
-    # ═══════════════════════════════════════════════════════════
-    #  BOTONES — con confirmación
-    # ═══════════════════════════════════════════════════════════
+
 
     def _confirmar_despliegue(self):
         if self.despliegue_conf:
             return
-        # ── CONFIRMACIÓN ──────────────────────────────────────
+       
         if not messagebox.askokcancel(
             "Confirmar despliegue",
             f"¿Confirmar DESPLIEGUE DE PARACAÍDAS?\n\n"
@@ -870,7 +1066,7 @@ class ModuloDespliegue:
             icon="warning"
         ):
             return
-        # ── LÓGICA ORIGINAL (sin cambios) ─────────────────────
+    
         self.despliegue_conf = True
         self.paracaidas_ok   = True
         self.btn_deploy.config(text="✓  DESPLIEGUE CONFIRMADO",
@@ -897,7 +1093,7 @@ class ModuloDespliegue:
             fg=GREEN_V)
         if callable(self.on_despliegue_confirmado):
             self.on_despliegue_confirmado(payload)
-        # ── MENSAJE FINAL ─────────────────────────────────────
+        
         messagebox.showinfo(
             "Despliegue confirmado",
             f"✓ Paracaídas desplegado correctamente.\n\n"
@@ -906,7 +1102,7 @@ class ModuloDespliegue:
         )
 
     def _despliegue_manual(self):
-        # ── CONFIRMACIÓN (doble advertencia por ser override) ──
+   
         if not messagebox.askyesno(
             "⚠ DESPLIEGUE MANUAL — OVERRIDE",
             "Está a punto de activar el DESPLIEGUE MANUAL.\n\n"
@@ -916,7 +1112,7 @@ class ModuloDespliegue:
             icon="warning"
         ):
             return
-        # ── LÓGICA ORIGINAL (sin cambios) ─────────────────────
+       
         self._log("⚠ DESPLIEGUE MANUAL ACTIVADO", "EMRG")
         self._activar_paracaidas()
         self.btn_deploy.config(state="normal",
@@ -924,7 +1120,7 @@ class ModuloDespliegue:
         self.lbl_auth.config(text="⚠  OVERRIDE MANUAL",
                               fg=AMBER_V, bg="#FFF8E1")
         self.auth_frame.config(bg="#FFF8E1", highlightbackground=AMBER_V)
-        # ── CONFIRMACIÓN FINAL ────────────────────────────────
+        # ── CONFIRMACIÓN FINAL
         messagebox.showwarning(
             "Override manual ejecutado",
             f"⚠ Despliegue manual activado.\n\n"
@@ -940,13 +1136,10 @@ class ModuloDespliegue:
             self._log(f"[OP] {txt}", "OP")
             entry_widget.delete(0, "end")
             entry_widget.insert(0, placeholder)
-            # ── CONFIRMACIÓN ──────────────────────────────────
+          
             messagebox.showinfo("Nota registrada",
                                 f"Nota añadida al registro:\n\n\"{txt}\"")
 
-    # ═══════════════════════════════════════════════════════════
-    #  GUARDAR / CARGAR
-    # ═══════════════════════════════════════════════════════════
 
     def _guardar_sesion(self):
         nombre = self.sesion_name_var.get().strip() or f"sesion_{self._sesion_inicio}"
@@ -988,19 +1181,33 @@ class ModuloDespliegue:
             self.lbl_save_st.config(
                 text=f"✓  Guardado: {os.path.basename(ruta)}", fg=GREEN_V)
             self._log(f"SESIÓN GUARDADA → {os.path.basename(ruta)}", "SAVE")
-            # ── CONFIRMACIÓN ──────────────────────────────────
+          
+
+            # Respaldo en MySQL / XAMPP 
+            db_msg = ""
+            if self._db.activa:
+                sid = self._db.guardar_sesion(sesion)
+                if sid:
+                    self._db_sesion_id = sid
+                    db_msg = f"\n  MySQL ID: #{sid}"
+                    self._log(f"SESIÓN → MySQL #{sid}", "SAVE")
+                else:
+                    db_msg = "\n  MySQL: error al guardar"
+            else:
+                db_msg = "\n  MySQL: sin conexión (XAMPP apagado)"
+
             messagebox.showinfo(
                 "Sesión guardada",
                 f"✓ Sesión guardada exitosamente.\n\n"
                 f"  Archivo: {os.path.basename(ruta)}\n"
                 f"  Fase:    {self.fase_actual}\n"
-                f"  Eventos: {len(self._eventos)}"
+                f"  Eventos: {len(self._eventos)}" + db_msg
             )
         except Exception as ex:
             self.lbl_save_st.config(text=f"✗  Error: {ex}", fg=RED_V)
 
     def _cargar_sesion(self):
-        # ── CONFIRMACIÓN PREVIA ────────────────────────────────
+       
         if not messagebox.askokcancel(
             "Cargar sesión",
             "¿Cargar una sesión guardada?\n\n"
@@ -1018,7 +1225,6 @@ class ModuloDespliegue:
             with open(ruta, "r", encoding="utf-8") as f:
                 sesion = json.load(f)
 
-            # ── VALIDACIÓN DE ESQUEMA ─────────────────────────
             if not isinstance(sesion, dict):
                 raise ValueError("El archivo no contiene un objeto JSON válido.")
             for seccion in ("meta", "estado", "historial"):
@@ -1033,7 +1239,7 @@ class ModuloDespliegue:
                 raise ValueError(
                     f"Fase desconocida en el archivo: '{fase_cargada}'.\n"
                     f"Valores válidos: {', '.join(FASES_ORDEN)}")
-            # ── FIN VALIDACIÓN ────────────────────────────────
+         
 
             meta   = sesion.get("meta",   {})
             estado = sesion.get("estado", {})
@@ -1069,7 +1275,7 @@ class ModuloDespliegue:
             self.lbl_save_st.config(
                 text=f"↑  Cargado: {fname}", fg=BLUE)
             self._log(f"SESIÓN CARGADA ← {fname}", "SAVE")
-            # ── CONFIRMACIÓN ──────────────────────────────────
+         
             messagebox.showinfo(
                 "Sesión cargada",
                 f"✓ Sesión cargada exitosamente.\n\n"
@@ -1082,14 +1288,12 @@ class ModuloDespliegue:
             self.lbl_save_st.config(text=f"✗  Error: {ex}", fg=RED_V)
             messagebox.showerror("Error al cargar", str(ex))
 
-    # ═══════════════════════════════════════════════════════════
-    #  LOG
-    # ═══════════════════════════════════════════════════════════
+
 
     def _log(self, msg, tag="SYS"):
         ts = time.strftime("%H:%M:%S")
         self._eventos.append({"ts": ts, "tag": tag, "msg": msg})
-        # ── LÍMITE DE EVENTOS ─────────────────────────────────
+     
         if len(self._eventos) > self._MAX_EVENTOS:
             self._eventos = self._eventos[-self._MAX_EVENTOS:]
         t = self.log_text
@@ -1097,10 +1301,9 @@ class ModuloDespliegue:
         t.insert("end", f"[{ts}][{tag}] {msg}\n", tag)
         t.see("end")
         t.config(state="disabled")
+        self._log_a_db(ts, tag, msg)  
 
-    # ═══════════════════════════════════════════════════════════
-    #  MEJORAS: cierre seguro · reset · export log · umbral
-    # ═══════════════════════════════════════════════════════════
+   
 
     def _on_closing(self):
         """Confirmación de cierre con oferta de guardar."""
@@ -1112,9 +1315,9 @@ class ModuloDespliegue:
                 "¿Desea guardar la sesión antes de salir?",
                 icon="warning"
             )
-            if resp is None:          # Cancelar → no cerrar
+            if resp is None:          
                 return
-            if resp:                  # Sí → guardar y luego cerrar
+            if resp:                 
                 self._guardar_sesion()
         self.parent.winfo_toplevel().destroy()
 
@@ -1141,12 +1344,10 @@ class ModuloDespliegue:
         self._eventos        = []
         self._sesion_inicio  = time.strftime("%Y%m%d_%H%M%S")
         self._para_anim      = 0.0
-        self._demo_idx       = 0
         self._max_alt        = 0.0
         self._min_vel        = 9999.0
         self._fase_ts        = time.time()
 
-        # Resetear widgets de estado
         self.lbl_alt.config(text="---")
         self.lbl_vel.config(text="---", fg=TEAL)
         self.lbl_batt.config(text="---", fg=AMBER_V)
@@ -1168,14 +1369,14 @@ class ModuloDespliegue:
         for f in FASES_ORDEN:
             self.fase_segs[f].config(bg=BG_DEEP)
 
-        # Resetear paracaídas
+       
         self._draw_chute(False, 0)
         self.lbl_chute_st.config(text="EN ESPERA", fg=TXT_MUTED, bg=BG_DEEP)
         self.lbl_chute_sub.config(
             text="Aguardando condiciones.", fg=TXT_SUB, bg=BG_DEEP)
         self.estado_box.config(highlightbackground=BDR, bg=BG_DEEP)
 
-        # Resetear botón de despliegue
+        
         self.btn_deploy.config(text="▶  DESPLEGAR PARACAÍDAS",
                                state="disabled", bg=BG_DEEP, fg=TXT_MUTED)
         self.lbl_auth.config(text="✗  ACCESO DENEGADO",
@@ -1183,13 +1384,12 @@ class ModuloDespliegue:
         self.auth_frame.config(bg="#FFEBEE", highlightbackground=RED_V)
         self.lbl_payload.config(text='{ "status": "waiting" }', fg=TXT_SUB)
 
-        # Resetear condiciones
+       
         for key in self.cond_items:
             ind, lbl = self.cond_items[key]
             ind.config(fg=BDR)
             lbl.config(fg=TXT_MUTED, font=(SANS, 10))
 
-        # Limpiar log visual
         self.log_text.config(state="normal")
         self.log_text.delete("1.0", "end")
         self.log_text.config(state="disabled")
@@ -1200,20 +1400,12 @@ class ModuloDespliegue:
         self._log("RESET — NUEVA MISIÓN INICIADA", "SYS")
         self._log("Aguardando datos de telemetría.", "SYS")
 
-        # ── PREGUNTA DE REACTIVACIÓN ──────────────────────────
-        resp = messagebox.askyesno(
+        messagebox.showinfo(
             "Reset completado",
             "✓ Módulo reiniciado.\n\n"
-            "¿Desea lanzar la secuencia DEMO ahora?\n\n"
-            "  Sí  → inicia telemetría de prueba\n"
-            "  No  → queda en STANDBY esperando\n"
-            "         datos reales",
-            icon="question"
+            "Sistema en STANDBY.\n"
+            "Esperando datos reales del ESP32."
         )
-        if resp:
-            self._demo_idx = 0
-            self._log("DEMO RELANZADO TRAS RESET", "SYS")
-            self.parent.after(800, self._demo_tick)
 
     def _exportar_log(self):
         """Exporta el registro de eventos a TXT o CSV."""
@@ -1282,108 +1474,181 @@ class ModuloDespliegue:
                                  f"Ingrese un número válido.\n\n{ex}")
             self._umbral_var.set(str(int(self._umbral_alt_m)))
 
-    # ═══════════════════════════════════════════════════════════
-    #  PÚBLICO
-    # ═══════════════════════════════════════════════════════════
+ 
 
     def recibir_datos(self, datos: dict):
         self._actualizar(datos)
 
-    def _demo_tick(self):
-        if self._demo_idx < len(TELEM_DEMO):
-            self.recibir_datos(TELEM_DEMO[self._demo_idx])
-            self._demo_idx += 1
-            self.parent.after(1200, self._demo_tick)
-        else:
-            self._log("DEMO COMPLETO.", "SYS")
+
+    def _conectar_db_async(self):
+        """Intenta conectar a MySQL en background y actualiza el indicador."""
+        ok = self._db.conectar()
+        def _actualizar_ui():
+            if hasattr(self, "lbl_db_st"):
+                if ok:
+                    self.lbl_db_st.config(text="DB ●", fg="#4CAF50")
+                    # Crear sesión RT en la BD para eventos en tiempo real
+                    sesion_inicial = {
+                        "meta": {
+                            "nombre":    self.sesion_name_var.get() if hasattr(self, "sesion_name_var") else "RT",
+                            "notas":     "",
+                            "timestamp": datetime.datetime.now().isoformat(),
+                            "mision":    "ALPHA-001",
+                            "modulo":    "DESPLIEGUE-v3",
+                        },
+                        "estado": {
+                            "fase_actual":   self.fase_actual,
+                            "altitud_m":     0,
+                            "velocidad_ms":  0,
+                            "bateria_pct":   0,
+                            "paracaidas_ok": False,
+                            "despliegue_conf": False,
+                            "max_altitud_m": 0,
+                            "min_velocidad": 0,
+                        },
+                        "historial": {"altitud": [], "velocidad": []},
+                        "eventos": [],
+                    }
+                    sid = self._db.guardar_sesion(sesion_inicial)
+                    self._db_sesion_id = sid
+                    if sid:
+                        self._log(f"BD conectada — sesión RT #{sid}", "SYS")
+                else:
+                    self.lbl_db_st.config(text="DB ✗", fg="#EF5350")
+                    self._log("BD MySQL sin conexión. Verifica XAMPP.", "SYS")
+        if hasattr(self, "parent"):
+            self.parent.after(0, _actualizar_ui)
+
+    def _log_a_db(self, ts, tag, msg):
+        """Inserta un evento en MySQL en hilo separado (no bloquea la UI)."""
+        if self._db.activa and self._db_sesion_id:
+            threading.Thread(
+                target=self._db.insertar_evento_rt,
+                args=(self._db_sesion_id, ts, tag, msg),
+                daemon=True
+            ).start()
+
+    def _telem_a_db(self, altitud, velocidad):
+        """Guarda muestra de telemetría en MySQL en hilo separado."""
+        if self._db.activa and self._db_sesion_id:
+            self._tel_idx += 1
+            threading.Thread(
+                target=self._db.insertar_telemetria_rt,
+                args=(self._db_sesion_id, self._tel_idx, altitud, velocidad),
+                daemon=True
+            ).start()
+
+    def _mostrar_sesiones_db(self):
+        """Muestra las últimas sesiones guardadas en MySQL."""
+        if not self._db.activa:
+            ok = self._db.reconectar()
+            if not ok:
+                messagebox.showwarning(
+                    "Sin conexión a MySQL",
+                    "No se pudo conectar a MySQL.\n\n"
+                    "Verifica:\n"
+                    "  1. XAMPP → MySQL en verde\n"
+                    "  2. Puerto 3306 disponible\n"
+                    "  3. pip install mysql-connector-python\n\n"
+                    "Revisa la consola (PowerShell) para\n"
+                    "ver el error exacto de conexión."
+                )
+                return
+            else:
+                self.lbl_db_st.config(text="DB ●", fg="#4CAF50")
+                self._log("BD reconectada exitosamente", "SYS")
+        rows = self._db.listar_sesiones()
+        if not rows:
+            messagebox.showinfo("BD vacía", "No hay sesiones en la base de datos.")
+            return
+        win = tk.Toplevel(self.parent)
+        win.title("Sesiones en MySQL — cohete_db")
+        win.configure(bg=BG_ROOT)
+        win.geometry("640x360")
+        tk.Label(win, text="SESIONES EN BASE DE DATOS",
+                 font=(SANS, 11, "bold"), bg=BG_ROOT, fg=NAVY).pack(pady=(12, 4))
+        cols = ("ID", "Nombre", "Misión", "Guardado", "Fase", "Eventos")
+        tree = ttk.Treeview(win, columns=cols, show="headings", height=12)
+        for c, w in zip(cols, (50, 180, 90, 150, 90, 70)):
+            tree.heading(c, text=c)
+            tree.column(c, width=w, anchor="center")
+        for r in rows:
+            tree.insert("", "end", values=(
+                r["id"], r["nombre"], r["mision"],
+                str(r["fecha_guardado"])[:16],
+                r["fase_final"], r["total_eventos"]
+            ))
+        sb = ttk.Scrollbar(win, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        tree.pack(side="left", fill="both", expand=True, padx=(12,0), pady=8)
+        sb.pack(side="right", fill="y", padx=(0,12), pady=8)
+
+        self._actualizar(datos)
 
 
-# ═══════════════════════════════════════════════════════════════
-#  LECTURA DATOS ESP32
-# ═══════════════════════════════════════════════════════════════
-if __name__ == "__main__":
-    import threading
-    import socket
-    import json
 
-    # ── CONFIGURACIÓN UDP ──────────────────────────────────
-    PUERTO_UDP = 8080
-
-    # ── VARIABLES GLOBALES PARA DETECTAR FASES ────────────
-    _alt_ant      = 0.0
-    _subiendo     = False
-    _apo_det      = False
-    _dep_done     = False
-    _dep_ant      = False
-    _cnt_baj      = 0
-    _cnt_est      = 0
-    _alt_est_ref  = 0.0
-
-    def _calcular_fase(datos: dict) -> str:
-        global _alt_ant, _subiendo, _apo_det
-        global _dep_done, _dep_ant
-        global _cnt_baj, _cnt_est, _alt_est_ref
-
+    def _calcular_fase(self, datos: dict) -> str:
         altitud    = datos.get("altitud",    0.0)
         desplegado = datos.get("desplegado", False)
 
-        # DESPLIEGUE confirmado por ESP32
-        if desplegado and not _dep_ant:
-            _dep_ant  = True
-            _dep_done = True
-            _apo_det  = True
+    
+        if desplegado and not self._udp_dep_ant:
+            self._udp_dep_ant  = True
+            self._udp_dep_done = True
+            self._udp_apo_det  = True
             print("[FASE] Despliegue confirmado por ESP32")
             return "DESPLIEGUE"
 
-        # Delta entre lecturas
-        delta    = altitud - _alt_ant
-        _alt_ant = altitud
+      
+        delta              = altitud - self._udp_alt_ant
+        self._udp_alt_ant  = altitud
 
-        # Detectar ascenso
+       
         if delta > 0.03:
-            _subiendo = True
-            _cnt_baj  = 0
-            _cnt_est  = 0
+            self._udp_subiendo  = True
+            self._udp_cnt_baj   = 0
+            self._udp_cnt_est   = 0
 
-        # Lecturas bajando
         if delta < -0.03:
-            _cnt_baj += 1
-            _cnt_est  = 0
+            self._udp_cnt_baj += 1
+            self._udp_cnt_est  = 0
         elif abs(delta) <= 0.05:
-            _cnt_est     += 1
-            _alt_est_ref  = altitud
+            self._udp_cnt_est     += 1
+            self._udp_alt_est_ref  = altitud
         else:
-            _cnt_est = 0
+            self._udp_cnt_est = 0
 
-        # APOGEO detectado → DESPLIEGUE
-        if _subiendo and _cnt_baj >= 3 and not _apo_det:
-            _apo_det  = True
-            _dep_done = True
+     
+        if self._udp_subiendo and self._udp_cnt_baj >= 3 and not self._udp_apo_det:
+            self._udp_apo_det  = True
+            self._udp_dep_done = True
             print("[FASE] Apogeo detectado localmente → DESPLIEGUE")
             return "DESPLIEGUE"
 
-        # ATERRIZAJE — estable 2 segundos cerca del suelo
-        if _dep_done and _cnt_est >= 10 and abs(_alt_est_ref) < 2.0:
+       
+        if self._udp_dep_done and self._udp_cnt_est >= 10 and abs(self._udp_alt_est_ref) < 2.0:
             return "ATERRIZAJE"
 
-        # DESCENSO — después del despliegue
-        if _dep_done:
+        if self._udp_dep_done:
             return "DESCENSO"
 
-        # ASCENSO
-        if altitud > 0.1 and _subiendo:
+      
+        if altitud > 0.1 and self._udp_subiendo:
             return "ASCENSO"
 
-        # STANDBY
+      
         return "STANDBY"
 
-    def servidor_udp(modulo_ref, root_ref):
-        """Servidor UDP que recibe datos del ESP32"""
+    def _servidor_udp(self):
+        """Servidor UDP que recibe datos del ESP32. Corre en hilo daemon."""
+        PUERTO_UDP = 8080
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind(("0.0.0.0", PUERTO_UDP))
         sock.settimeout(1.0)
         print(f"[UDP] Escuchando en puerto {PUERTO_UDP}...")
         print(f"[UDP] Esperando datos del ESP32...")
+
+        root_ref = self.parent.winfo_toplevel()
 
         while True:
             try:
@@ -1391,11 +1656,11 @@ if __name__ == "__main__":
                 mensaje = datos_raw.decode("utf-8").strip()
                 datos   = json.loads(mensaje)
 
-                # Solo procesar mensajes de tipo despliegue
+             
                 if datos.get("type", "") != "despliegue":
                     continue
 
-                fase = _calcular_fase(datos)
+                fase = self._calcular_fase(datos)
 
                 print(f"[ESP32] Alt: {datos.get('altitud', 0):.2f}m | "
                       f"Desplegado: {datos.get('desplegado', False)} | "
@@ -1409,9 +1674,8 @@ if __name__ == "__main__":
                     "fase":         fase,
                 }
 
-                # Pasar datos a la app en el hilo principal de Tkinter
-                root_ref.after(
-                    0, lambda d=datos_app: modulo_ref.recibir_datos(d))
+           
+                root_ref.after(0, lambda d=datos_app: self.recibir_datos(d))
 
             except socket.timeout:
                 continue
@@ -1420,12 +1684,15 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"[ERROR UDP] {e}")
 
+
+
+if __name__ == "__main__":
     def sim_rec(payload):
         print("\n[RECUPERACIÓN] Estado final:")
         for k, v in payload.items():
             print(f"  {k}: {v}")
 
-    # ── ABRIR LA APP ───────────────────────────────────────
+   
     root = tk.Tk()
     root.title("Módulo Despliegue v3 — Sala de Control")
     root.state("zoomed")
@@ -1437,18 +1704,7 @@ if __name__ == "__main__":
     modulo = ModuloDespliegue(frame)
     modulo.on_despliegue_confirmado = sim_rec
 
-    # ── LANZAR SERVIDOR UDP EN HILO SEPARADO ───────────────
-    hilo = threading.Thread(
-        target=servidor_udp,
-        args=(modulo, root),
-        daemon=True
-    )
-    hilo.start()
-
-    # Demo desactivado — recibe datos reales del ESP32
-    # Para activar el demo descomenta la siguiente línea:
-    # root.after(1000, modulo._demo_tick)
-
+   
     print("[APP] Interfaz gráfica iniciada")
     print("[APP] Esperando datos UDP del ESP32 en puerto 8080...")
 
