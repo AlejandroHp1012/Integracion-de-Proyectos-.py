@@ -1641,7 +1641,7 @@ class ModuloDespliegue:
 
     def _servidor_udp(self):
         """Servidor UDP que recibe datos del ESP32. Corre en hilo daemon."""
-        PUERTO_UDP = 8080
+        PUERTO_UDP = 8082
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind(("0.0.0.0", PUERTO_UDP))
         sock.settimeout(1.0)

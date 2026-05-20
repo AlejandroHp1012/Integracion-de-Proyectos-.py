@@ -8,6 +8,8 @@
   CANALES:
     127.0.0.1:8080  UDP  downlink -> modulo_aterrizaje   (telemetria)
     127.0.0.1:8081  UDP  downlink -> modulo_recuperacion (telemetria)
+    127.0.0.1:8082  UDP  downlink -> modulo_despliegue   (trama despliegue)
+    127.0.0.1:9091  UDP  downlink -> modulo_despegue     (telemetria)
     127.0.0.1:9090  UDP  uplink   <- cualquier modulo    (comandos)
 
   ESTADO INICIAL:
@@ -439,6 +441,8 @@ def main():
                    help="Puerto UDP de modulo_aterrizaje (default 8080)")
     p.add_argument("--puerto-recuperacion", type=int, default=8081,
                    help="Puerto UDP de modulo_recuperacion (default 8081)")
+    p.add_argument("--puerto-despliegue", type=int, default=8082,
+                   help="Puerto UDP de modulo_despliegue (default 8082)")
     p.add_argument("--puerto-despegue", type=int, default=9091,
                    help="Puerto UDP de modulo_despegue (default 9091)")
     p.add_argument("--cmd-port", type=int, default=9090,
@@ -486,6 +490,7 @@ def main():
     print("== Simulador ESP32-S3 (v2) ==")
     print(f"   telemetria -> {args.host}:{args.puerto_aterrizaje} (aterrizaje)")
     print(f"                 {args.host}:{args.puerto_recuperacion} (recuperacion)")
+    print(f"                 {args.host}:{args.puerto_despliegue} (despliegue)")
     print(f"                 {args.host}:{args.puerto_despegue} (despegue)")
     print(f"   comandos   <- {args.cmd_bind}:{args.cmd_port}")
     print(f"   modo:       {args.modo}")
@@ -533,7 +538,7 @@ def main():
             if args.modo in ("despliegue", "ambos"):
                 payload_dep = hacer_payload_despliegue(mision_t, estado)
                 data_dep = json.dumps(payload_dep).encode("utf-8")
-                sock.sendto(data_dep, (args.host, args.puerto_aterrizaje))
+                sock.sendto(data_dep, (args.host, args.puerto_despliegue))
                 if args.modo == "despliegue":
                     fase = payload_dep["fase"]
                     altitud = payload_dep["altitud"]

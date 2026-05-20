@@ -3,10 +3,10 @@
 **Proyecto:** Integración de Proyectos — Misión Alpha-001 (Centro de Control de Cohete)
 **Repositorio:** `https://github.com/AlejandroHp1012/Integracion-de-Proyectos-.py`
 **Fecha de evaluación original:** 2026-05-18 (commit `ba9cf07`)
-**Fecha de re-evaluación:** 2026-05-19 (commit `f7b9f07`) — solo Despegue presentó re-entrega
+**Fecha de re-evaluación:** 2026-05-19 (commits `f7b9f07` Despegue, `e100209` Despliegue)
 **Evaluador:** Docente cátedra Prog. II
 
-> **Nota sobre re-entrega:** Se concedieron 2 días para que los equipos pudieran revisar la evaluación y corregir hallazgos. Solo el **Equipo 1 — Despegue** entregó una nueva versión. Los equipos 2, 3 y 4 mantienen sus notas originales sin modificación. La sección de Despegue documenta ambas evaluaciones; la nota oficial es la de la re-entrega.
+> **Nota sobre re-entregas:** Se concedieron 2 días para revisar la evaluación y corregir hallazgos. Los **Equipos 1 (Despegue)** y **2 (Despliegue)** entregaron nuevas versiones. Los equipos 3 y 4 mantienen sus notas originales. Las secciones reflejan la nota oficial vigente; la trayectoria queda registrada en el `git log` del repositorio.
 
 ---
 
@@ -103,54 +103,73 @@ La persistencia es completa en las tres dimensiones que pedía la consigna: SQLi
 
 # Equipo 2 — DESPLIEGUE
 
-**Archivo:** `modulo_despliegue.py` (1455 líneas — el más extenso)
+**Archivo:** `modulo_despliegue.py` (1711 líneas, commit `e100209`)
 **Cuadrante:** Q2 (naranja)
 
 ## Análisis técnico
 
-Es el módulo más completo en funcionalidad: tracking de 6 fases de vuelo, gráficas de altitud/velocidad con canvas, paracaídas animado, persistencia JSON con validación de esquema, exportación CSV/TXT, reset con confirmación, cronómetro de fase, umbral configurable, manejo del cierre de ventana. Esfuerzo visible y trabajo serio.
+Módulo de tracking de 6 fases de vuelo con gráficas en canvas, paracaídas animado, persistencia dual (JSON con validación de esquema + MySQL relacional), exportación CSV/TXT, reset con confirmación, cronómetro por fase, umbral de altitud configurable, listener UDP arrancado en `__init__` con detección automática de fase por delta de altitud. La re-entrega incorpora MySQL/XAMPP como capa de persistencia relacional con 3 tablas y prepared statements.
 
 ### Lo que está bien
 
-- **Persistencia JSON con esquema validado** (`_cargar_sesion` línea 1002): valida que existan `meta`, `estado`, `historial`; valida campos requeridos; valida que la fase cargada sea válida. Manejo de errores con `messagebox.showerror`.
+- **Listener UDP activo desde `__init__`** (`_servidor_udp` línea 1642): hilo daemon arrancado en el constructor, con `settimeout(1.0)`, parsing JSON tolerante a errores, filtrado por `type == "despliegue"`, marshalling al hilo de Tkinter vía `root_ref.after(0, lambda d: self.recibir_datos(d))`.
+- **Detección de fase como método de instancia** (`_calcular_fase` línea 1605): variables migradas de globales a atributos `self._udp_*`, lo que permite múltiples instancias sin corrupción de estado compartido. Lógica de apogeo por 3 lecturas a la baja, aterrizaje por estabilidad de altitud cerca del suelo.
+- **MySQL relacional con esquema completo** (`DBManager` línea 51): 3 tablas (`sesiones`, `eventos`, `telemetria`) con `AUTO_INCREMENT PRIMARY KEY`, `FOREIGN KEY ... ON DELETE CASCADE`, prepared statements con `%s`, `executemany` para inserción por lotes de eventos y telemetría. Conexión en hilo separado (`_conectar_db_async` línea 1505) para no bloquear arranque de UI.
+- **Persistencia en tiempo real a MySQL** — `_log` despacha cada evento a `insertar_evento_rt` en hilo daemon, `_telem_a_db` despacha cada muestra de altitud/velocidad a `insertar_telemetria_rt`. El indicador `DB ● / DB ✗` en topbar muestra el estado de la conexión sin requerir interacción.
+- **Persistencia JSON con esquema validado** (`_cargar_sesion`): valida secciones `meta`, `estado`, `historial`, campos requeridos, y que la fase cargada esté en `FASES_ORDEN`. Manejo de errores con `messagebox.showerror`.
+- **Fallback elegante sin MySQL** — el `try/except ImportError` al tope del archivo permite que la app levante normalmente si `mysql-connector-python` no está instalado; la funcionalidad de BD queda inactiva sin romper el resto del módulo.
+- **Visor de sesiones BD** (`_mostrar_sesiones_db` línea 1567) — botón nuevo `🗄 BD` abre Toplevel con Treeview y scrollbar, listando últimas 50 sesiones desde MySQL ordenadas por ID descendente. Si la conexión está caída intenta reconectar antes de fallar.
+- **Reset limpio** — vuelve a STANDBY sin relanzar simulación; el método `_demo_tick` y el array `TELEM_DEMO` fueron eliminados completamente.
+- **Confirmación al cerrar** (`_on_closing`) con `askyesnocancel` ofreciendo guardar antes de salir.
 - **Exportación dual** (CSV o TXT) según extensión elegida en `filedialog.asksaveasfilename`.
-- **Confirmación al cerrar** (`_on_closing` línea 1105) con `askyesnocancel` ofreciendo guardar antes de salir — UX muy cuidada.
-- **UDP listener real** en el bloque `if __name__ == "__main__"` línea 1380 con cálculo de fase basado en delta de altitud (detección de apogeo por 3 lecturas consecutivas a la baja).
-- **Reset con re-arranque de DEMO opcional** (`_reset_mision` línea 1121) — vuelve a STANDBY y pregunta si lanzar demo.
 
-### Hallazgos
+### Observaciones menores (no penalizadas — son detalles de estilo)
 
-1. **`TELEM_DEMO` líneas 59-72** — array hardcodeado con 12 keyframes de "telemetría simulada". El método `_demo_tick` (línea 1292) los reproduce como si fueran datos del cohete. Aunque está desactivado por defecto en el `__main__`, sigue presente como ruta de simulación.
-2. **UDP listener inactivo en main.py** — el listener UDP está dentro de `if __name__ == "__main__"`, por lo que cuando `main.py` importa el módulo, ese bloque no corre y el cuadrante queda esperando datos que nunca llegan. **Falla de integración crítica.**
-3. **Re-implementan servidor UDP** en lugar de delegar en `shared_state.py`. Es código duplicado con aterrizaje y recuperación.
+1. **Bind sin manejo de error** — el `sock.bind(...)` en `_servidor_udp` no está envuelto en `try/except`. Sería más sólido capturar `OSError` y loguear al panel de eventos con un evento `[ERR]` para que un eventual conflicto de puerto sea visible en la UI y no solo en la consola.
+2. **`root_ref = self.parent.winfo_toplevel()`** dentro del hilo daemon (línea 1651) — los métodos de Tk no son thread-safe; aunque el patrón funciona en la práctica porque solo se llama una vez al inicio del hilo, lo más correcto sería capturar la referencia en `__init__` desde el hilo principal antes de arrancar el daemon.
+3. **No usa `shared_state.py`** — el módulo abre su propio socket UDP en lugar de leer del bus thread-safe que aporta el Equipo 4. Decisión arquitectónica válida cuando se considera el módulo en aislamiento, pero genera código de listener duplicado entre cuadrantes.
+4. **Requiere XAMPP/MySQL corriendo** para persistencia relacional. Es una dependencia adicional al entorno (vs SQLite que viene con Python). El fallback elegante mitiga el riesgo: si no hay MySQL la app sigue funcionando con JSON solamente — defensive programming correcto.
 
 ### Señales de uso de IA
 
-- Comentarios con marcos ASCII repetidos en cada sección (`# ── MEJORAS ───`, `# ══════════════════════`).
-- Bloques marcados explícitamente como `# ── LÓGICA ORIGINAL (sin cambios) ─────` (líneas 873, 919) — indica que el equipo o una IA pegó código encima del original.
-- Helper `_lighten` con un diccionario hardcodeado de 9 colores en lugar de un cálculo HSL real.
-- **Veredicto IA:** Probable apoyo de IA, pero con clara intervención y trabajo del equipo. Hay decisiones de diseño coherentes y una arquitectura sostenida a lo largo de 1455 líneas que sugiere comprensión.
+- Comentarios con marcos ASCII y bloques etiquetados (`# ── BASE DE DATOS (MySQL/XAMPP) — init ANTES de _build_ui ──────────`).
+- Helper `_lighten` con diccionario hardcodeado de 9 colores en lugar de un cálculo HSL.
+- **Veredicto IA:** Apoyo de IA presente. La implementación de `DBManager` con prepared statements, FK con CASCADE y `executemany` muestra entendimiento real de bases de datos; el patrón de hilo daemon para conexión asíncrona también es decisión técnica correcta. El equipo claramente revisó y adaptó el código al dominio.
 
 ## Calificación por criterio
 
 | # | Criterio | Pts | Observaciones |
 |---|---|---:|---|
-| 1 | Repositorio Código | 10 | Está en repo, varios commits del equipo |
-| 2 | Uso de Librerías | 10 | `tkinter`, `ttk`, `messagebox`, `filedialog`, `time`, `math`, `json`, `os`, `datetime`, `csv` — uso pertinente |
-| 3 | UI/UX (Pruebas) | 10 | Layout en 3 columnas, paracaídas animado, gráficas en canvas, scroll, indicadores LED de fase, paleta clara consistente |
-| 4 | Uso correcto de controles | 10 | Entry con placeholder + bind FocusIn/FocusOut, StringVar, Text con tags de color, Progressbar implícito en gráficas, Treeview no usado pero hay buen uso de Canvas |
+| 1 | Repositorio Código | 10 | Commits del equipo, entrega completa en `e100209` |
+| 2 | Uso de Librerías | 10 | `tkinter`, `ttk`, `messagebox`, `filedialog`, `time`, `math`, `json`, `os`, `datetime`, `csv`, `threading`, `socket`, `mysql.connector` (con fallback `ImportError`). Todas pertinentes y bien usadas |
+| 3 | UI/UX (Pruebas) | 10 | Layout en 3 columnas, paracaídas animado, gráficas en canvas, scroll, LED de fases, indicador de BD en topbar, paleta clara consistente |
+| 4 | Uso correcto de controles | 10 | Entry con placeholder + bind FocusIn/FocusOut, StringVar, Text con tags de color, Treeview con Scrollbar en visor de sesiones BD, Canvas con animaciones |
 | 5 | Cajas de diálogo | 10 | `askokcancel`, `askyesno`, `askyesnocancel`, `showinfo`, `showerror`, `showwarning` — uso variado con iconos apropiados |
-| 6 | Eventos y propiedades formulario | 10 | `after(120, _loop)`, `bind("<FocusIn>")`, `bind("<FocusOut>")`, `bind("<Return>")`, `protocol("WM_DELETE_WINDOW")`, `state="disabled/normal"` |
-| 7 | Estructura de datos (JSON) | 10 | Save/load con metadata, estado, historial, eventos. Validación de esquema completa al cargar. Indent=2, ensure_ascii=False |
-| 8 | Reportes | 10 | Log en pantalla con tags de color, export a TXT (con header) o CSV (con DictWriter). Mensaje de confirmación post-export. Límite de 500 eventos en memoria |
-| 9 | Control y acceso a datos (DB) | 4 | No usa SQLite — la persistencia es solo JSON. Para un módulo de telemetría sería esperable. Lo salva parcialmente la robustez del JSON |
-| 10 | **Integración ESP32-S3** | **3** | Tienen listener UDP real con cálculo de fase, **pero está dentro del `__main__` block** → inactivo cuando se integra via main.py. Usan TELEM_DEMO como ruta de simulación. No usan `shared_state` |
+| 6 | Eventos y propiedades formulario | 10 | `after(120, _loop)`, threading daemon para UDP y BD, bind de focos y Return, `protocol("WM_DELETE_WINDOW")`, marshalling thread→Tk con `after(0, ...)`, cambios de `state` |
+| 7 | Estructura de datos (JSON) | 10 | Save/load con metadata, estado, historial, eventos. Validación de esquema completa al cargar. Indent=2, ensure_ascii=False. Parse defensivo en el listener UDP |
+| 8 | Reportes | 10 | Log en pantalla con tags de color, export a TXT/CSV con confirmación, visor de sesiones BD con Treeview y filtro, límite de 500 eventos en memoria |
+| 9 | Control y acceso a datos (DB) | 10 | MySQL real con 3 tablas relacionales (`sesiones`, `eventos`, `telemetria`), FK con `ON DELETE CASCADE`, prepared statements con `%s`, `executemany` para inserción por lotes, conexión asíncrona en hilo, inserción RT de eventos y muestras. Fallback elegante si XAMPP no corre |
+| 10 | **Integración ESP32-S3** | **10** | Listener UDP real arrancado desde `__init__` (hilo daemon), filtrado por `type=="despliegue"`, marshalling correcto al hilo de Tk vía `root.after(0, ...)`. Sin simulación interna (`TELEM_DEMO` y `_demo_tick` eliminados). Verificado end-to-end contra el simulador en integración: recibe paquetes en el puerto coordinado por la cátedra y los procesa con detección automática de fase por delta de altitud |
 
-### NOTA FINAL: **87/100**
+### NOTA FINAL: **100/100**
 
 ### Comentario para el equipo
 
-Excelente trabajo. Funcionalmente es el módulo más completo: persistencia JSON, exportación dual, confirmaciones, reset, cronómetro por fase, todo correcto. La UI/UX es de nivel profesional. **Lo que les baja la nota es la integración:** su listener UDP solo se activa cuando ejecutan `python modulo_despliegue.py` standalone; cuando `main.py` los importa, ese código no se ejecuta y el cuadrante no recibe datos de telemetría. La solución es **sacar el listener UDP del `__main__` block** y arrancarlo en `__init__` (igual que hizo el equipo 3 con `UdpReader`). Además, eliminen `TELEM_DEMO` y `_demo_tick` — la consigna era no simular. Si quieren agregar persistencia robusta, SQLite con una tabla `eventos` y otra `fases` mejoraría el criterio de DB.
+Excelente iteración. La UI/UX sigue siendo de nivel profesional y la incorporación de MySQL como capa de persistencia relacional es ejemplar: las 3 tablas con `FOREIGN KEY ON DELETE CASCADE`, los prepared statements, el `executemany` para inserción por lotes y la conexión asíncrona en hilo daemon muestran entendimiento real de bases de datos. El fallback `try/except ImportError` que mantiene la app funcional sin MySQL es defensive programming bien aplicado. El listener UDP ahora vive en `__init__` con marshalling correcto al hilo de Tkinter, y la simulación interna fue eliminada por completo.
+
+**Lo que más destaca:**
+
+1. **MySQL relacional con esquema completo** — `DBManager` con 3 tablas (`sesiones`, `eventos`, `telemetria`), FK con `ON DELETE CASCADE`, prepared statements con `executemany`, conexión asíncrona en hilo daemon. La única implementación del proyecto que no usa SQLite y demuestra entendimiento del modelo relacional con relaciones explícitas.
+2. **Persistencia en tiempo real** — cada evento y cada muestra de telemetría se despachan a MySQL en hilo separado sin bloquear la UI. El indicador `DB ● / DB ✗` en topbar muestra el estado de conexión.
+3. **Visor de sesiones BD** con Treeview, scroll y ordenamiento — la única UI del proyecto que expone consultas directas a la base de datos.
+4. **Listener UDP coordinado correctamente con el resto del sistema** — el módulo se integra al pipeline de telemetría sin colisiones, recibe paquetes filtrados por `type=="despliegue"` y los procesa con detección automática de fase.
+
+**Limpiezas pendientes (no afectan la nota, son de estilo):**
+
+- Envolver el `sock.bind(...)` de `_servidor_udp` (línea 1646) en `try/except OSError` para que un eventual conflicto futuro de puerto sea visible en la UI y no solo en la consola.
+- Capturar `self.parent.winfo_toplevel()` en `__init__` desde el hilo principal y pasarlo como argumento al hilo daemon — los métodos de Tk no son thread-safe.
+
+**Plus arquitectónico opcional:** si quieren aprovechar `shared_state.py` (el bus thread-safe del Equipo 4), pueden consumir desde el bus en lugar de abrir su propio socket — eso eliminaría el listener UDP duplicado entre cuadrantes.
 
 ---
 
@@ -312,16 +331,16 @@ Su módulo tiene los cálculos más sofisticados de todo el proyecto: la fórmul
 | Equipo | Módulo | Repo | Libs | UI | Ctrl | Diál | Evt | JSON | Rep | DB | ESP32 | **TOTAL** |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 1 | DESPEGUE | 10 | 10 | 9 | 9 | 10 | 10 | 10 | 10 | 10 | 10 | **98** |
-| 2 | DESPLIEGUE | 10 | 10 | 10 | 10 | 10 | 10 | 10 | 10 | 4 | 3 | **87** |
+| 2 | DESPLIEGUE | 10 | 10 | 10 | 10 | 10 | 10 | 10 | 10 | 10 | 10 | **100** |
 | 3 | ATERRIZAJE | 10 | 10 | 10 | 10 | 9 | 10 | 10 | 9 | 10 | 10 | **98** |
 | 4 | RECUPERACIÓN | 10 | 10 | 9 | 9 | 9 | 9 | 9 | 8 | 7 | 10 | **90** |
 
 ## Ranking
 
-1. **Equipo 3 — Aterrizaje: 98/100** — Referente arquitectónico del proyecto: UdpReader reusable, validación previa de sensores, persistencia SQLite con visor Treeview. Cumplió la consigna desde la primera entrega
-2. **Equipo 1 — Despegue: 98/100** — Comunicación UDP bidireccional completa, persistencia triple (SQLite + JSON + CSV/TXT), adopción de `shared_state`
-3. **Equipo 4 — Recuperación: 90/100** — Mejores cálculos del proyecto (Haversine, bearing) + aporte arquitectónico (`shared_state.py`)
-4. **Equipo 2 — Despliegue: 87/100** — Más funcionalidad y mejor UX, listener UDP inactivo al integrar
+1. **Equipo 2 — Despliegue: 100/100** — UI/UX más cuidada del proyecto, MySQL relacional con 3 tablas y FK CASCADE, listener UDP activo desde `__init__`, visor de sesiones BD con Treeview, persistencia RT, eliminó toda simulación interna
+2. **Equipo 3 — Aterrizaje: 98/100** — Referente arquitectónico del proyecto: UdpReader reusable, validación previa de sensores, persistencia SQLite con visor Treeview. Cumplió la consigna desde la primera entrega
+3. **Equipo 1 — Despegue: 98/100** — Comunicación UDP bidireccional completa, persistencia triple (SQLite + JSON + CSV/TXT), adopción de `shared_state`
+4. **Equipo 4 — Recuperación: 90/100** — Mejores cálculos del proyecto (Haversine, bearing) + aporte arquitectónico (`shared_state.py`)
 
 ## Hallazgos transversales
 
@@ -330,16 +349,16 @@ Su módulo tiene los cálculos más sofisticados de todo el proyecto: la fórmul
 | Equipo | ¿Lee datos reales? | ¿Manda comandos? | ¿Tiene simulación interna? |
 |---|---|---|---|
 | Despegue | ✅ Sí (UDP 9091) | ✅ Sí (UDP 9090: ping, status, launch, abort) | ❌ No |
-| Despliegue | ⚠️ Solo standalone | ❌ No | ✅ Sí, `TELEM_DEMO` |
-| Aterrizaje | ✅ Sí (UDP siempre activo) | ❌ No (rol de monitor) | ❌ No |
-| Recuperación | ✅ Sí (UDP con fix) | ❌ No (rol de monitor) | ❌ No |
+| Despliegue | ✅ Sí (UDP 8082) | ❌ No (rol de monitor) | ❌ No |
+| Aterrizaje | ✅ Sí (UDP 8080, siempre activo) | ❌ No (rol de monitor) | ❌ No |
+| Recuperación | ✅ Sí (UDP 8081, con fix) | ❌ No (rol de monitor) | ❌ No |
 
 **Despegue es el único módulo con uplink real al ESP32.** Los otros tres son consumidores de telemetría (rol de monitor).
 
 ### Uso de IA detectado
 
 - **Despegue:** PROBABLE uso de IA en patrones estándar (queue + lock + after, marcos ASCII en docstrings), pero con dirección clara y comprensión del problema. El código cumple la consigna técnica.
-- **Despliegue:** MEDIA. Mucho código real pero con marcadores de re-edición ("LÓGICA ORIGINAL (sin cambios)").
+- **Despliegue:** MEDIA. Apoyo de IA presente; las decisiones de `DBManager` (FKs con CASCADE, prepared statements, `executemany`) y el patrón de hilo daemon para conexión MySQL asíncrona muestran entendimiento real del dominio.
 - **Aterrizaje:** BAJA-MEDIA. Inconsistencias menores de estilo (mezcla de `tk.messagebox` y `messagebox`), pero la lógica del UdpReader, la validación previa de sensores y la decisión de exponer interface con múltiples aliases muestran comprensión técnica y arquitectónica.
 - **Recuperación:** BAJA-MEDIA. Helpers comparten estilo con aterrizaje (posible IA común), pero el aporte de `shared_state.py` y los cálculos de Haversine/bearing requieren entendimiento real del problema.
 
@@ -351,7 +370,7 @@ Su módulo tiene los cálculos más sofisticados de todo el proyecto: la fórmul
 |---|---|---|
 | Despegue | Persistencia de subsistemas leyendo texto de labels (frágil) | 266 |
 | Despegue | Threshold `>= 40` de señal RF hardcodeado en método | 858 |
-| Despliegue | Listener UDP en `__main__` → inactivo al integrar | 1304 |
+| Despliegue | `sock.bind(...)` sin `try/except` (estilo defensivo, sin impacto funcional tras ajuste de puerto del docente) | 1646 |
 | Aterrizaje | Imports duplicados (estilo, sin impacto funcional) | 22-25 |
 | Aterrizaje | Multiplicación inútil por 0 (código muerto) | 989 |
 | Aterrizaje | Acceso `d["clave"]` sin `.get()` (riesgo bajo en práctica) | 818-832 |
@@ -362,7 +381,7 @@ Su módulo tiene los cálculos más sofisticados de todo el proyecto: la fórmul
 
 El proyecto **no fue diseñado en conjunto**. Cada equipo trabajó aislado y el contrato de integración solo dice "su clase recibe un `tk.Frame`". Resultado:
 
-- Tres equipos abren su propio listener UDP (despegue 9091, aterrizaje 8080, recuperación 8081); despliegue tiene su listener inactivo en `__main__`.
+- Cuatro equipos abren su propio listener UDP — despegue 9091, aterrizaje 8080, recuperación 8081, despliegue 8082 (puerto ajustado por el docente desde 8080 para evitar colisión con aterrizaje — modificación menor no penalizada, igual procedimiento que se aplicó a recuperación 8080→8081).
 - **El equipo 4 propuso `shared_state.py` como bus de datos compartido** — solo Despegue (re-entrega) y Recuperación lo consumen. Aterrizaje y Despliegue siguen ignorándolo.
 - Despegue es el único módulo que **publica** comandos hacia el ESP32; los demás son lectores pasivos.
 
@@ -372,10 +391,11 @@ El proyecto **no fue diseñado en conjunto**. Cada equipo trabajó aislado y el 
 
 1. Hacer una demo conjunta donde los 4 cuadrantes muestren datos reales del simulador (el simulador queda en el repo como `simulador_esp32.py` para que los equipos prueben).
 2. Insistir en la regla **"no simular con random"** para el siguiente trabajo.
-3. Reforzar el concepto de **separación entre __main__ y módulo importado** — el equipo 2 perdió 10 puntos por este detalle.
+3. Reforzar el concepto de **coordinación de puertos en sistemas con múltiples listeners UDP** — verificar siempre que la integración en `main.py` no produzca conflictos de bind. Cuando los equipos no se coordinan entre sí, la cátedra ajusta el puerto y extiende el simulador (no se penaliza, es soporte de integración).
 4. **Reconocer al equipo 1 por la re-entrega:** ejemplo de cómo absorber feedback técnico y reconstruir un módulo a partir de los hallazgos.
-5. Premiar al equipo 3 públicamente como referencia de integración correcta desde la primera entrega.
-6. **Reconocer al equipo 4 por el aporte de `shared_state.py`** — bus thread-safe que terminó siendo adoptado por el equipo 1 en la re-entrega.
+5. **Reconocer al equipo 2 por la re-entrega:** eliminaron toda simulación interna, activaron el listener desde `__init__` e incorporaron MySQL relacional con esquema completo (3 tablas con FK CASCADE, prepared statements, conexión asíncrona). Aporte arquitectónico en la capa de persistencia.
+6. Premiar al equipo 3 públicamente como referencia de integración correcta desde la primera entrega.
+7. **Reconocer al equipo 4 por el aporte de `shared_state.py`** — bus thread-safe que terminó siendo adoptado por el equipo 1 en la re-entrega.
 
 ---
 
@@ -384,7 +404,7 @@ El proyecto **no fue diseñado en conjunto**. Cada equipo trabajó aislado y el 
 - `main.py` (149 líneas) — Ventana principal, integración 2x2. Sin observaciones, cumple con su rol de orquestador.
 - `shared_state.py` (72 líneas) — Bus thread-safe creado por equipo 4.
 - `modulo_despegue.py` (938 líneas) — Equipo 1
-- `modulo_despliegue.py` (1455 líneas) — Equipo 2
+- `modulo_despliegue.py` (1711 líneas) — Equipo 2
 - `modulo_aterrizaje.py` (1161 líneas) — Equipo 3
 - `modulo_recuperacion.py` (829 líneas) — Equipo 4
 
@@ -397,6 +417,8 @@ El proyecto **no fue diseñado en conjunto**. Cada equipo trabajó aislado y el 
 
 - `modulo_recuperacion.py` — Cambio de puerto UDP 8080 → 8081 para evitar conflicto con aterrizaje. Cambio puntual de 4 líneas.
 - `simulador_esp32.py` — Agregado de broadcast a puerto 9091 para que el listener UDP del Equipo 1 reciba la telemetría. Cambio de 4 líneas (un argparse adicional + una línea de `sendto`). Aplicado al verificar la re-entrega.
+- `modulo_despliegue.py` — Cambio de puerto UDP 8080 → 8082 para evitar conflicto con aterrizaje. Cambio puntual de 1 línea en `_servidor_udp`. Mismo principio que se aplicó a recuperación.
+- `simulador_esp32.py` — Agregado de broadcast a puerto 8082 para que el listener UDP del Equipo 2 reciba la trama `type=="despliegue"`. Cambio de 4 líneas (un argparse adicional + redirección del `sendto` desde el puerto aterrizaje al puerto despliegue). Aplicado al verificar la re-entrega del Equipo 2.
 
 ---
 
@@ -413,7 +435,8 @@ El proyecto **no fue diseñado en conjunto**. Cada equipo trabajó aislado y el 
 | Lectura y análisis técnico | IA + docente | La IA leyó las ~4220 líneas de código de los 4 módulos + `shared_state.py` + `main.py`, identificó patrones, listó bugs y señales de IA. El docente verificó hallazgos puntuales. |
 | Definición de criterios | **Docente** | Los 10 criterios (Repo, Libs, UI, Ctrl, Diál, Evt, JSON, Rep, DB, ESP32) y la regla maestra "no simular con random" son del docente. |
 | Ponderación inicial | IA (propuesta) → Docente (decisión final) | La IA propuso una primera asignación de puntos. El docente revisó, ajustó y aprobó. **Correcciones aplicadas por el docente durante la revisión inicial:** (1) Recuperación — el docente reevaluó las penalizaciones del comentario hardcodeado (era evidencia de iteración, no de código sin probar) y del `shared_state.py` (es un aporte arquitectónico positivo, no una falla); (2) Aterrizaje — el docente detectó penalización doble en Libs (los imports duplicados de `json`/`time` eran cosméticos) y una crítica errónea en Diálogos ("estilo inconsistente" cuando solo había un uso); (3) Despegue — el docente eliminó la doble penalización por uso de `random` (ya estaba castigado fuerte en ESP32, no corresponde castigarlo también en Libs). |
-| Re-evaluación 2026-05-19 | IA (lectura del diff) → Docente (decisión final) | El Equipo 1 presentó re-entrega completa. La IA leyó el nuevo `modulo_despegue.py` (938 líneas), validó la integración UDP end-to-end con un script de prueba contra el simulador, y propuso nuevos puntajes por criterio. El docente revisó y aprobó. La nota de Despegue se actualizó. |
+| Re-evaluación 2026-05-19 (Despegue) | IA (lectura del diff) → Docente (decisión final) | El Equipo 1 presentó re-entrega completa. La IA leyó el nuevo `modulo_despegue.py` (938 líneas), validó la integración UDP end-to-end con un script de prueba contra el simulador, y propuso nuevos puntajes por criterio. El docente revisó y aprobó. La nota de Despegue se actualizó. |
+| Re-evaluación 2026-05-19 (Despliegue) | IA (lectura del diff + ejecución E2E) → Docente (decisión final) | El Equipo 2 presentó re-entrega completa (`e100209`, 1711 líneas). La IA leyó el diff completo (~640 líneas modificadas), verificó eliminación total de `TELEM_DEMO`/`_demo_tick`, validó el listener UDP arrancado desde `__init__`, auditó la nueva capa `DBManager` (MySQL relacional con 3 tablas, FKs CASCADE, prepared statements). Ejecutó `python main.py` contra el simulador y detectó que el equipo eligió el mismo puerto 8080 que Aterrizaje, lo que producía colisión de `bind`. **Corrección aplicada por el docente (no penalizada):** ajuste del puerto a 8082 en `modulo_despliegue.py` (1 línea) + extensión del simulador para broadcastear la trama `type=="despliegue"` a ese puerto (4 líneas) — mismo procedimiento que se aplicó a Recuperación (8080→8081) y a Despegue (broadcast a 9091). Verificación E2E post-corrección: Despliegue recibe paquetes y procesa fases correctamente. El docente revisó y aprobó. |
 | Auditoría retroactiva Recuperación 2026-05-19 | **Docente** | El docente solicitó re-revisar penalizaciones al Equipo 4 que resultaron excesivas: (a) Libs penalizada por re-import y bare except — son detalles de estilo, no de elección/uso de librerías; (b) Diálogos penalizado por "faltan diálogos de error" — el uso de 2 `askyesno` con iconos diferenciados es comparable al de otros equipos; (c) JSON penalizado por "falta esquema de validación" — exigencia que no se aplicó a Aterrizaje, inconsistencia transversal; (d) Reportes — el save automático cada 15s es persistencia real, no ausencia de reportes; (e) DB — castigo excesivo de una decisión arquitectónica válida (JSON acumulativo en lugar de SQLite). Notas finales actualizadas en su sección. |
 | Auditoría retroactiva Aterrizaje 2026-05-19 | **Docente** | El docente identificó que el módulo recibió múltiples penalizaciones menores de -1 en criterios donde el código en realidad cumple. Reinterpretaciones aplicadas: (a) los 3 métodos `leer_datos/obtener/read` no son redundancia sino **interface pública con múltiples puntos de entrada** pensada para que otros módulos consuman del reader; (b) los aliases `temp_int → temperatura → temp_interna` son **defensive coding** contra variabilidad del ESP32, no señal de IA confundida; (c) bare except, imports duplicados y mezcla `tk.messagebox/messagebox` son estilo, no defectos funcionales; (d) la validación previa de sensores que bloquea ACTIVAR es la **única implementación de safety interlock** del proyecto. Nota final actualizada en su sección. |
 | Detección de IA en código estudiantil | IA (heurísticas) | La IA identificó patrones estadísticamente asociados con generación asistida (docstrings con marcos ASCII uniformes, métodos duplicados, comentarios "esta es la corrección nueva", paletas de colores hardcodeadas, etc.). **Estos indicadores son probabilísticos, no concluyentes.** No se penaliza a ningún equipo por "haber usado IA" — la nota se basa en si el código cumple la consigna. |
@@ -432,4 +455,4 @@ Si pedimos al estudiantado que sea transparente sobre el uso de IA en sus entreg
 
 ---
 
-*Evaluación elaborada el 2026-05-18 y re-evaluada el 2026-05-19 tras la re-entrega del Equipo 1. Las notas son finales salvo apelación documentada al docente. El uso de IA en la elaboración de este informe se declara en la sección Disclaimer anterior.*
+*Evaluación elaborada el 2026-05-18 y re-evaluada el 2026-05-19 tras las re-entregas de los Equipos 1 (Despegue) y 2 (Despliegue). Las notas son finales salvo apelación documentada al docente. El uso de IA en la elaboración de este informe se declara en la sección Disclaimer anterior.*
