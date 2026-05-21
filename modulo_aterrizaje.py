@@ -16,13 +16,11 @@ import math
 import sqlite3
 import json
 import time
+import socket
+import threading
 from datetime import datetime
 
 # ── Lector UDP (WiFi) ──────────────────────────────────────────
-import socket
-import threading
-import json
-import time
 
 class UdpReader:
     def __init__(self, port=8080):
@@ -103,17 +101,14 @@ class UdpReader:
             "bmi160": "ok"
         }
         
-    def leer_datos(self): 
-        self.nuevo_dato = False
-        return self._ultimo_dato
-        
-    def obtener(self):
-        self.nuevo_dato = False
-        return self._ultimo_dato
-        
     def read(self):
+        """Retorna el último dato recibido y resetea el flag de nuevo_dato."""
         self.nuevo_dato = False
         return self._ultimo_dato
+
+    # Alias de compatibilidad
+    leer_datos = read
+    obtener    = read
 
 try:
     _reader = UdpReader(port=8080)
@@ -162,9 +157,9 @@ C = {
 }
 
 MONO   = "Courier New"
-MONO_S = (MONO, 7,  "bold")
-MONO_M = (MONO, 9,  "bold")
-MONO_L = (MONO, 11, "bold")
+MONO_S = (MONO, 9,  "bold")   # antes: 7 — etiquetas pequeñas
+MONO_M = (MONO, 11, "bold")   # antes: 9 — valores medianos
+MONO_L = (MONO, 13, "bold")   # antes: 11 — títulos y encabezados
 
 
 # ══════════════════════════════════════════════════════
@@ -204,7 +199,7 @@ class _VBar(tk.Canvas):
             fy = bh * (1 - pct)
             self.create_rectangle(5, fy, w-5, bh-1, fill=self._fg, outline="")
         self.create_text(w//2, bh + 10, text=self._lbl,
-                         fill=C["text_gray"], font=(MONO, 6, "bold"))
+                         fill=C["text_gray"], font=(MONO, 8, "bold"))
 
 
 # ══════════════════════════════════════════════════════
@@ -214,7 +209,7 @@ class _VentanaHistorial(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("HISTORIAL TELEMETRÍA — SQLite")
-        self.geometry("820x520")
+        self.geometry("980x620")
         self.configure(bg=C["bg"])
         self.resizable(True, True)
         self._construir()
@@ -256,11 +251,11 @@ class _VentanaHistorial(tk.Toplevel):
         style.theme_use("default")
         style.configure("Telem.Treeview",
                         background="#070B14", foreground=C["text_gray"],
-                        fieldbackground="#070B14", rowheight=20,
-                        font=(MONO, 7))
+                        fieldbackground="#070B14", rowheight=24,
+                        font=(MONO, 9))
         style.configure("Telem.Treeview.Heading",
                         background=C["purple_dk"], foreground=C["purple"],
-                        font=(MONO, 7, "bold"), relief="flat")
+                        font=(MONO, 9, "bold"), relief="flat")
         style.map("Telem.Treeview", background=[("selected", C["purple_dim"])])
 
         self._tree = ttk.Treeview(frame_t, columns=cols, show="headings",
@@ -420,7 +415,6 @@ class ModuloAterrizaje:
                                  bg=C["amber_dim"], fg=C["amber"])
         self._log(">>> Verificando sensores ESP32...")
 
-        import threading
         def _tarea():
             if _reader is None or not _reader.conectado:
                 self.parent.after(0, self._on_sensor_fail, "ESP32 no conectado por WiFi")
@@ -468,7 +462,7 @@ class ModuloAterrizaje:
     # ══════════════════════════════════════════════════
     def _construir_ui(self):
         # ── HEADER ────────────────────────────────────
-        hdr = tk.Frame(self.parent, bg=C["bg"], height=52)
+        hdr = tk.Frame(self.parent, bg=C["bg"], height=60)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
         tk.Frame(hdr, bg=C["border_hi"], height=2).pack(fill="x")
@@ -481,10 +475,10 @@ class ModuloAterrizaje:
         lf.pack(side="left")
         tk.Label(lf, text="🛬 ATERRIZAJE", font=MONO_L,
                  bg=C["bg"], fg=C["purple"]).pack(side="left")
-        tk.Label(lf, text="  MISION ALPHA-001", font=(MONO, 7),
+        tk.Label(lf, text="  MISION ALPHA-001", font=(MONO, 9),
                  bg=C["bg"], fg=C["text_gray"]).pack(side="left")
         self._lbl_sensor_status = tk.Label(
-            lf, text="● ESPERANDO SENSORES", font=MONO_S,
+            lf, text="● ESPERANDO SENSORES", font=MONO_M,
             bg=C["bg"], fg=C["amber"])
         self._lbl_sensor_status.pack(side="left", padx=12)
 
@@ -494,7 +488,7 @@ class ModuloAterrizaje:
 
         # Reloj
         self._lbl_clock = tk.Label(rf, text="T+00:00:00",
-                                   font=(MONO, 9, "bold"),
+                                   font=(MONO, 11, "bold"),
                                    bg=C["bg"], fg=C["amber"])
         self._lbl_clock.pack(side="right", padx=(8, 0))
 
@@ -522,7 +516,7 @@ class ModuloAterrizaje:
         tk.Frame(hdr, bg=C["purple_dim"], height=1).pack(fill="x", side="bottom")
 
         # ── STATUS BAR ────────────────────────────────
-        sbar = tk.Frame(self.parent, bg=C["panel"], height=22)
+        sbar = tk.Frame(self.parent, bg=C["panel"], height=30)
         sbar.pack(fill="x")
         sbar.pack_propagate(False)
 
@@ -539,9 +533,9 @@ class ModuloAterrizaje:
                 ("YAW",         "---°",     C["purple"])]:
             f = tk.Frame(sbar, bg=C["panel"])
             f.pack(side="left", padx=5)
-            tk.Label(f, text=key+":", font=(MONO, 6, "bold"),
+            tk.Label(f, text=key+":", font=(MONO, 8, "bold"),
                      bg=C["panel"], fg=C["purple_dim"]).pack(side="left")
-            lbl = tk.Label(f, text=val, font=(MONO, 6, "bold"),
+            lbl = tk.Label(f, text=val, font=(MONO, 8, "bold"),
                            bg=C["panel"], fg=color)
             lbl.pack(side="left", padx=(2, 0))
             self._status_labels[key] = lbl
@@ -576,7 +570,7 @@ class ModuloAterrizaje:
         f.columnconfigure(1, weight=1)
 
         # Altitud grande
-        tk.Label(f, text="ALTITUD (BMP180)", font=(MONO, 6, "bold"),
+        tk.Label(f, text="ALTITUD (BMP180)", font=(MONO, 8, "bold"),
                  bg=C["panel"], fg=C["text_gray"]).grid(
                  row=0, column=0, columnspan=2, sticky="w")
         self._lbl_alt = tk.Label(f, text="--- m",
@@ -591,7 +585,7 @@ class ModuloAterrizaje:
         for col, (lbl, attr, unit) in enumerate([
                 ("VEL. VERTICAL", "_lbl_vv", "m/s"),
                 ("VEL. HORIZ.",   "_lbl_vh", "m/s")]):
-            tk.Label(f, text=lbl, font=(MONO, 6, "bold"),
+            tk.Label(f, text=lbl, font=(MONO, 8, "bold"),
                      bg=C["panel"], fg=C["text_gray"]).grid(row=3, column=col, sticky="w")
             lv = tk.Label(f, text=f"--- {unit}",
                           font=(MONO, 11, "bold"), bg=C["panel"], fg=C["cyan"])
@@ -605,7 +599,7 @@ class ModuloAterrizaje:
         for col, (lbl, attr, unit) in enumerate([
                 ("ACELERACIÓN",   "_lbl_acel",  "m/s²"),
                 ("MAG.ACELER.",   "_lbl_mag",   "m/s²")]):
-            tk.Label(f, text=lbl, font=(MONO, 6, "bold"),
+            tk.Label(f, text=lbl, font=(MONO, 8, "bold"),
                      bg=C["panel"], fg=C["text_gray"]).grid(row=6, column=col, sticky="w")
             lv = tk.Label(f, text=f"--- {unit}", font=MONO_M,
                           bg=C["panel"], fg=C["amber"])
@@ -636,7 +630,7 @@ class ModuloAterrizaje:
         for i, (axis, color) in enumerate([("PITCH", C["purple"]),
                                             ("ROLL",  C["cyan"]),
                                             ("YAW",   C["amber"])]):
-            tk.Label(vf, text=axis, font=(MONO, 6, "bold"),
+            tk.Label(vf, text=axis, font=(MONO, 8, "bold"),
                      bg=C["panel"], fg=C["text_gray"]).grid(row=i*2, column=0, sticky="w")
             lv = tk.Label(vf, text="0.0°", font=MONO_M, bg=C["panel"], fg=color)
             lv.grid(row=i*2, column=1, sticky="w", padx=4)
@@ -650,7 +644,7 @@ class ModuloAterrizaje:
         f.columnconfigure(1, weight=1)
 
         # Temperaturas
-        tk.Label(f, text="TEMPERATURA INTERNA (BMP180)", font=(MONO, 6, "bold"),
+        tk.Label(f, text="TEMPERATURA INTERNA (BMP180)", font=(MONO, 8, "bold"),
                  bg=C["panel"], fg=C["text_gray"]).grid(
                  row=0, column=0, columnspan=2, sticky="w")
         self._lbl_temp_int = tk.Label(f, text="--- °C",
@@ -661,7 +655,7 @@ class ModuloAterrizaje:
         tk.Frame(f, bg=C["border"], height=1).grid(
             row=2, column=0, columnspan=2, sticky="ew", pady=3)
 
-        tk.Label(f, text="TEMPERATURA EXTERNA (DS18B20)", font=(MONO, 6, "bold"),
+        tk.Label(f, text="TEMPERATURA EXTERNA (DS18B20)", font=(MONO, 8, "bold"),
                  bg=C["panel"], fg=C["text_gray"]).grid(
                  row=3, column=0, columnspan=2, sticky="w")
         self._lbl_temp_ext = tk.Label(f, text="--- °C",
@@ -673,7 +667,7 @@ class ModuloAterrizaje:
             row=5, column=0, columnspan=2, sticky="ew", pady=3)
 
         # Presión
-        tk.Label(f, text="PRESIÓN ATMOSFÉRICA", font=(MONO, 6, "bold"),
+        tk.Label(f, text="PRESIÓN ATMOSFÉRICA", font=(MONO, 8, "bold"),
                  bg=C["panel"], fg=C["text_gray"]).grid(
                  row=6, column=0, columnspan=2, sticky="w")
         self._lbl_presion_ui = tk.Label(f, text="--- hPa",
@@ -704,12 +698,12 @@ class ModuloAterrizaje:
         for col, (nombre, desc, attr) in enumerate(sensores):
             sf = tk.Frame(f, bg=C["panel"])
             sf.grid(row=0, column=col, padx=6, pady=2)
-            cv = tk.Canvas(sf, width=14, height=14,
+            cv = tk.Canvas(sf, width=16, height=16,
                            bg=C["panel"], highlightthickness=0)
             cv.pack(side="left", padx=(0, 4))
-            tk.Label(sf, text=nombre, font=(MONO, 7, "bold"),
+            tk.Label(sf, text=nombre, font=(MONO, 9, "bold"),
                      bg=C["panel"], fg=C["white"]).pack(side="left")
-            lbl = tk.Label(f, text=desc, font=(MONO, 6),
+            lbl = tk.Label(f, text=desc, font=(MONO, 8),
                            bg=C["panel"], fg=C["text_gray"])
             lbl.grid(row=1, column=col)
             setattr(self, attr, cv)
@@ -737,7 +731,7 @@ class ModuloAterrizaje:
                             bg=C["panel"], highlightthickness=0)
             ind.pack(side="left", padx=(0, 4))
             lbl = tk.Label(ff, text=f"{i} │ {nombre}",
-                           font=(MONO, 7), bg=C["panel"], fg=C["text_dark"])
+                           font=(MONO, 9), bg=C["panel"], fg=C["text_dark"])
             lbl.pack(side="left")
             self._fase_labels.append((ind, lbl))
 
@@ -750,17 +744,17 @@ class ModuloAterrizaje:
         re.pack(fill="x")
         for col, (lbl, attr) in enumerate([("ERROR LATERAL", "_lbl_err_lat"),
                                             ("ERROR LONG.",   "_lbl_err_lon")]):
-            tk.Label(re, text=lbl, font=(MONO, 6, "bold"),
+            tk.Label(re, text=lbl, font=(MONO, 8, "bold"),
                      bg=C["panel"], fg=C["text_gray"]).grid(row=0, column=col,
                      sticky="w", padx=5)
-            lv = tk.Label(re, text="0.0 m", font=MONO_S,
+            lv = tk.Label(re, text="0.0 m", font=MONO_M,
                           bg=C["panel"], fg=C["cyan"])
             lv.grid(row=1, column=col, sticky="w", padx=5)
             setattr(self, attr, lv)
 
     def _ui_telem(self, f):
         self._telem = tk.Text(f, bg="#020408", fg=C["text_gray"],
-                              font=(MONO, 7), relief="flat",
+                              font=(MONO, 9), relief="flat",
                               state="disabled", insertbackground=C["purple"])
         sb = ttk.Scrollbar(f, orient="vertical", command=self._telem.yview)
         self._telem.configure(yscrollcommand=sb.set)
@@ -770,11 +764,11 @@ class ModuloAterrizaje:
     def _card(self, parent, title, builder, expand=False):
         outer = tk.Frame(parent, bg=C["border_hi"], padx=1, pady=1)
         outer.pack(fill="both", expand=expand, pady=3)
-        hdr = tk.Frame(outer, bg="#070B14", height=22)
+        hdr = tk.Frame(outer, bg="#070B14", height=26)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
         tk.Frame(hdr, bg=C["border_hi"], width=3).pack(side="left", fill="y")
-        tk.Label(hdr, text=f"  {title}", font=(MONO, 7, "bold"),
+        tk.Label(hdr, text=f"  {title}", font=(MONO, 9, "bold"),
                  bg="#070B14", fg=C["purple"]).pack(side="left", pady=3)
         inner = tk.Frame(outer, bg=C["panel"], padx=6, pady=5)
         inner.pack(fill="both", expand=expand)
@@ -983,7 +977,7 @@ class ModuloAterrizaje:
             cv = getattr(self, attr)
             cv.delete("all")
             color = C["green"] if ok else C["red_dim"]
-            cv.create_oval(1, 1, 13, 13, fill=color, outline="")
+            cv.create_oval(1, 1, 15, 15, fill=color, outline="")
 
         # Contador de paquetes recibidos
         paq = int((time.time() - (_reader._ultimo_paquete or time.time())) * 0)
@@ -1010,9 +1004,7 @@ class ModuloAterrizaje:
         if not self.sistema_activo:
             c.create_text(w//2, h//2, text="ESPERANDO SENSORES",
                           fill=C["purple_dim"], font=MONO_M)
-            return
-
-        # Escala fija de 0 a 50m
+            return        # Escala fija de 0 a 50m
         alt_max = 50.0
 
         # Líneas de referencia de altitud
@@ -1022,7 +1014,7 @@ class ModuloAterrizaje:
             py = max(10, h - int((alt_m / alt_max) * (h - 20)) - 10)
             c.create_line(0, py, w, py, fill="#0d0a20", dash=(4, 6))
             c.create_text(4, py, text=f"{alt_m}m",
-                          fill=C["purple_dim"], font=(MONO, 6), anchor="w")
+                          fill=C["purple_dim"], font=(MONO, 8), anchor="w")
 
         # Trayectoria
         if len(self._trayectoria) >= 2:
@@ -1049,15 +1041,15 @@ class ModuloAterrizaje:
         zw = 24
         c.create_rectangle(rx-zw, h-14, rx+zw, h-2,
                            fill=C["green_dim"], outline=C["green"], width=1)
-        c.create_text(rx, h - 8, text="ZONA", fill=C["green"], font=(MONO, 6))
+        c.create_text(rx, h - 8, text="ZONA", fill=C["green"], font=(MONO, 8))
 
         # Textos de overlay
         c.create_text(8, 8, text=f"ALT {self.altitud:.1f}m",
-                      fill=C["purple"], font=(MONO, 7, "bold"), anchor="nw")
+                      fill=C["purple"], font=(MONO, 9, "bold"), anchor="nw")
         c.create_text(w - 8, 8, text=self.FASE_NOMBRES[self.fase],
-                      fill=C["amber"], font=(MONO, 7, "bold"), anchor="ne")
+                      fill=C["amber"], font=(MONO, 9, "bold"), anchor="ne")
         c.create_text(8, h - 8, text=f"VEL {self.vel_vert:+.2f}m/s",
-                      fill=C["cyan"], font=(MONO, 6, "bold"), anchor="sw")
+                      fill=C["cyan"], font=(MONO, 8, "bold"), anchor="sw")
 
     def _draw_zona(self):
         c = self._zona_canvas
@@ -1070,7 +1062,7 @@ class ModuloAterrizaje:
             c.create_oval(cx-r, cy-r, cx+r, cy+r,
                           outline=C["purple_dim"], dash=(4, 4))
             c.create_text(cx+r+2, cy, text=lbl,
-                          fill=C["text_gray"], font=(MONO, 5), anchor="w")
+                          fill=C["text_gray"], font=(MONO, 7), anchor="w")
         c.create_line(cx-5, cy, cx+5, cy, fill=C["green"], width=2)
         c.create_line(cx, cy-5, cx, cy+5, fill=C["green"], width=2)
         scale = 38 / 50
@@ -1081,7 +1073,7 @@ class ModuloAterrizaje:
         c.create_oval(bx-2, by-2, bx+2, by+2, fill=C["amber"], outline="")
         err = math.sqrt(self.error_lat**2 + self.error_lon**2)
         c.create_text(4, h - 5, text=f"Δ {err:.1f}m",
-                      fill=C["cyan"], font=(MONO, 6), anchor="sw")
+                      fill=C["cyan"], font=(MONO, 8), anchor="sw")
 
     def _draw_attitude(self):
         c = self._att_canvas
@@ -1102,7 +1094,7 @@ class ModuloAterrizaje:
         c.create_line(cx, cy-8, cx, cy+8, fill=C["purple"], width=2)
         c.create_oval(cx-3, cy-3, cx+3, cy+3, fill=C["purple"], outline="")
         c.create_text(4, 4, text="ATT", fill=C["purple_dim"],
-                      font=(MONO, 6, "bold"), anchor="nw")
+                      font=(MONO, 8, "bold"), anchor="nw")
 
     def _update_fases(self):
         for i, (ind, lbl) in enumerate(self._fase_labels):
@@ -1149,7 +1141,7 @@ if __name__ == "__main__":
     # Crea la ventana principal de la interfaz
     root = tk.Tk()
     root.title("Telemetría de Aterrizaje - Equipo 3")
-    root.geometry("1100x650")
+    root.geometry("1280x780")
     
     # Usa el mismo color de fondo que tienen en su paleta
     root.configure(bg="#04080F") 
